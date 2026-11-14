@@ -191,8 +191,10 @@ These are deliberate scope cuts for the prototype, roughly in priority order:
 - **Drugs:** no `days_supply` or `quantity` from dispenseRequest, and no route.
 - **IDs:** `INTEGER` ids come from `row_number`, so they're stable for the same input but not
   across incremental loads.
-- **Validation:** checked by `tests/run_tests.sh`, `qc.csv` and DQD (`make dqd`). DQD
-  hasn't been run with a full Athena vocabulary yet.
+- **Validation:** checked by `tests/run_tests.sh`, `qc.csv` and DQD (`make dqd`), including
+  DQD with a full Athena vocabulary on 100 Synthea patients (see
+  [Data quality](#data-quality-ohdsi-dqd)). Not yet compared with OHDSI's ETL-Synthea, and
+  only tested on Synthea data.
 
 ## License
 
