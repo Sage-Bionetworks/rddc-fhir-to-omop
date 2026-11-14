@@ -169,9 +169,14 @@ SELECT e.*,
        const('type', e.type_code) AS type_concept_id,
        TRY_CAST(e.value_quantity->>'value' AS DOUBLE) AS value_number,
        coalesce(e.value_quantity->>'code', e.value_quantity->>'unit') AS unit_source_value,
-       coalesce(um.concept_id, 0) AS unit_concept_id,
+       -- NULL when there is no unit at all; 0 when there is one that doesn't map.
+       CASE WHEN coalesce(e.value_quantity->>'code', e.value_quantity->>'unit') IS NOT NULL
+            THEN coalesce(um.concept_id, 0) END AS unit_concept_id,
+       CASE WHEN coalesce(e.value_quantity->>'code', e.value_quantity->>'unit') IS NOT NULL
+            THEN coalesce(um.source_concept_id, 0) END AS unit_source_concept_id,
        e.value_coding->>'code' AS value_code,
-       coalesce(vm.concept_id, 0) AS value_as_concept_id
+       CASE WHEN e.value_coding->>'code' IS NOT NULL
+            THEN coalesce(vm.concept_id, 0) END AS value_as_concept_id
 FROM stg.event e
 LEFT JOIN stg.id_map pm ON pm.resource_type = 'Patient' AND pm.fhir_id = ref_id(e.subject_ref)
 LEFT JOIN stg.id_map em ON em.resource_type = 'Encounter' AND em.fhir_id = ref_id(e.encounter_ref)

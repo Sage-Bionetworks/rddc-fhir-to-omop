@@ -69,6 +69,12 @@ check "$o" "invalid relationship ignored" \
   "SELECT count(*) = 0 FROM 'drug_exposure.csv' WHERE drug_source_value = '140' AND drug_concept_id = 2000000001"
 check "$o" "unit mapped (mm[Hg] -> 8876)" \
   "SELECT bool_and(unit_concept_id = 8876) FROM 'measurement.csv' WHERE unit_source_value = 'mm[Hg]'"
+check "$o" "unit source concept carried (mm[Hg] -> 8876)" \
+  "SELECT bool_and(unit_source_concept_id = 8876) FROM 'measurement.csv' WHERE unit_source_value = 'mm[Hg]'"
+check "$o" "optional concept fields without source data are NULL, not 0" \
+  "SELECT (SELECT count(*) FROM 'drug_exposure.csv' WHERE route_concept_id IS NOT NULL) = 0
+      AND (SELECT count(*) FROM 'observation.csv' WHERE unit_source_value IS NULL AND unit_concept_id IS NOT NULL) = 0
+      AND (SELECT count(*) FROM 'measurement.csv' WHERE operator_concept_id IS NOT NULL) = 0"
 check "$o" "ids unique within each table" \
   "SELECT count(*) = count(DISTINCT drug_exposure_id) FROM 'drug_exposure.csv'"
 check "$o" "vocabulary version recorded" \

@@ -112,6 +112,34 @@ Timestamps keep the local wall-clock time and drop the UTC offset, so `*_date` a
 - source values longer than 50 characters
 - row counts
 
+## Data quality (OHDSI DQD)
+
+`qa/dqd/` runs the OHDSI [Data Quality Dashboard](https://github.com/OHDSI/DataQualityDashboard)
+directly on DuckDB:
+
+```bash
+make dqd-deps     # one-time: DQD, DatabaseConnector, CommonDataModel, duckdb into .tools/R-lib
+make dqd          # fixture + tests/data/vocab_mini -> results/dqd/
+make dqd INPUT=data/synthea-100 VOCAB=/path/to/athena
+```
+
+`build_cdm_db.sh` creates a complete CDM 5.4 database (all 39 tables, official DDL from
+`CommonDataModel`, saved in `cdm54_ddl_duckdb.sql`). It loads the pipeline output and any
+Athena files present. `run_dqd.R` then runs `executeDqChecks` and writes:
+
+- `dqd_results.json`: open it with `DataQualityDashboard::viewDqDashboard()`
+- `dqd_summary.csv`: the checks that failed or errored
+
+Needs R >= 4.2 and a JDK. `run.sh` finds `JAVA_HOME` from `java` on PATH.
+
+Results on the test fixture with `vocab_mini` (DQD 2.9.1): 2,384 checks, 1,089 passed,
+20 failed, 0 errors, 1,275 not applicable. Most of the not-applicable checks are on empty
+tables.
+
+- 17 of the failures are codes missing from the 30-concept test vocabulary. A real Athena
+  vocabulary will give the meaningful numbers.
+- The other 3 are the missing `condition_era` and `drug_era` tables.
+
 ## Test data
 
 - `tests/data/fhir/`: 8 Synthea patients (`-p 6 -s 7`, including deceased), bulk NDJSON,
@@ -144,5 +172,5 @@ These are deliberate scope cuts for the prototype, roughly in priority order:
 - **Drugs:** no `days_supply` or `quantity` from dispenseRequest, and no route.
 - **IDs:** `INTEGER` ids come from `row_number`, so they're stable for the same input but not
   across incremental loads.
-- **Validation:** the output is checked only by `tests/run_tests.sh` and `qc.csv`. The OHDSI
-  Data Quality Dashboard hasn't been run on it.
+- **Validation:** checked by `tests/run_tests.sh`, `qc.csv` and DQD (`make dqd`). DQD
+  hasn't been run with a full Athena vocabulary yet.

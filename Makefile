@@ -4,7 +4,7 @@ SHELL := /bin/bash
 export NXF_HOME ?= $(CURDIR)/.tools/nxf-home
 NEXTFLOW := $(CURDIR)/.tools/nextflow
 
-.PHONY: tools test nf-test nf-test-docker image synthea clean
+.PHONY: tools test nf-test nf-test-docker image synthea dqd-deps dqd clean
 
 tools: .tools/duckdb .tools/nextflow   ## fetch duckdb CLI + nextflow into .tools/
 
@@ -34,6 +34,24 @@ SEED ?= 1
 OUT ?= data/synthea-$(N)
 synthea:
 	scripts/generate_synthea.sh $(OUT) $(N) $(SEED)
+
+# OHDSI Data Quality Dashboard. R packages go into .tools/R-lib (binary builds from Posit
+# Package Manager for this distro, CRAN as fallback); needs R >= 4.2 and a JDK.
+#   make dqd                                   fixture + tests/data/vocab_mini
+#   make dqd INPUT=data/synthea-100 VOCAB=/path/to/athena
+INPUT ?= tests/data/fhir
+VOCAB ?= tests/data/vocab_mini
+DQD_OUT ?= results/dqd
+dqd-deps:
+	mkdir -p .tools/R-lib
+	R_LIBS_USER=$(CURDIR)/.tools/R-lib Rscript -e 'codename <- tryCatch(sub("VERSION_CODENAME=", "", grep("^VERSION_CODENAME=", readLines("/etc/os-release"), value = TRUE)), error = function(e) ""); \
+	  options(repos = c(P3M = sprintf("https://packagemanager.posit.co/cran/__linux__/%s/latest", codename), CRAN = "https://cloud.r-project.org"), \
+	          HTTPUserAgent = sprintf("R/%s R (%s)", getRversion(), paste(getRversion(), R.version["platform"], R.version["arch"], R.version["os"]))); \
+	  install.packages(c("DataQualityDashboard", "DatabaseConnector", "SqlRender", "duckdb", "CommonDataModel"), lib = Sys.getenv("R_LIBS_USER"))'
+
+dqd: .tools/duckdb
+	PATH=$(CURDIR)/.tools:$$PATH bin/fhir_to_omop.sh --fhir-dir $(INPUT) --out-dir $(DQD_OUT)/etl $(if $(VOCAB),--vocab-dir $(VOCAB))
+	qa/dqd/run.sh $(DQD_OUT)/etl/omop $(or $(VOCAB),-) $(DQD_OUT) "$(notdir $(INPUT))"
 
 clean:
 	rm -rf work results .nextflow .nextflow.log*

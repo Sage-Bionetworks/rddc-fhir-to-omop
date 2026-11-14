@@ -2,7 +2,9 @@
 
 A hand-made, Athena-format (tab-delimited) vocabulary for tests. **Not real vocabulary data.**
 
-- Concept ids below 2,000,000,000 are the real OMOP ids for the constants the ETL hard-codes
+- Concept `0` ("No matching concept") is included, as in every real Athena download; DQD
+  foreign-key checks fail on 0 without it.
+- Other concept ids below 2,000,000,000 are the real OMOP ids for the constants the ETL hard-codes
   (gender, race, ethnicity, visit, type concepts, CDM version, `mm[Hg]`).
 - Concept ids at or above 2,000,000,000 are fabricated (OMOP's local-concept range), attached
   to real codes that occur in `../fhir`, so `tests/run_tests.sh` can check:

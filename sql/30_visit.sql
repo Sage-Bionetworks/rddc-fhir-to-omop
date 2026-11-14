@@ -9,8 +9,8 @@ SELECT m.omop_id, p.person_id,
        const('type', 'ehr'),
        omop_id('Practitioner', resolve_ref(e.practitioner_ref)),
        omop_id('Organization', resolve_ref(e.org_ref)),
-       e.cls, 0,
-       0, NULL, 0, NULL,
+       e.cls, NULL,
+       NULL, NULL, NULL, NULL,
        lag(m.omop_id) OVER (PARTITION BY p.person_id ORDER BY fhir_ts(e.s), m.omop_id)
 FROM (
     SELECT id,

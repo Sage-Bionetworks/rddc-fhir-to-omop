@@ -27,7 +27,7 @@ JOIN stg.id_map m ON m.resource_type = 'Patient' AND m.fhir_id = p.id
 WHERE a IS NOT NULL;
 
 INSERT INTO care_site
-SELECT m.omop_id, f.res->>'name', 0, NULL, f.id, NULL
+SELECT m.omop_id, f.res->>'name', NULL, NULL, f.id, NULL
 FROM stg.fhir f
 JOIN stg.id_map m ON m.resource_type = 'Organization' AND m.fhir_id = f.id
 WHERE f.resource_type = 'Organization';
@@ -37,9 +37,9 @@ SELECT m.omop_id,
        concat_ws(' ', f.res->'name'->0->'given'->>0, f.res->'name'->0->>'family'),
        list_filter(json_extract(f.res, '$.identifier[*]'),
                    lambda i: i->>'system' = 'http://hl7.org/fhir/sid/us-npi')[1]->>'value',
-       NULL, 0, NULL, NULL,
+       NULL, NULL, NULL, NULL,
        const('gender', f.res->>'gender'),
-       f.id, NULL, 0, f.res->>'gender', 0
+       f.id, NULL, NULL, f.res->>'gender', NULL
 FROM stg.fhir f
 JOIN stg.id_map m ON m.resource_type = 'Practitioner' AND m.fhir_id = f.id
 WHERE f.resource_type = 'Practitioner';
@@ -54,9 +54,9 @@ SELECT m.omop_id,
        (SELECT location_id FROM location l WHERE l.location_id = m.omop_id),
        omop_id('Practitioner', resolve_ref(p.gp_ref)),
        NULL,
-       p.id, p.gender, 0,
-       left(coalesce(p.race_code || ' ' || p.race_text, p.race_text), 50), 0,
-       left(coalesce(p.eth_code || ' ' || p.eth_text, p.eth_text), 50), 0
+       p.id, p.gender, NULL,
+       left(coalesce(p.race_code || ' ' || p.race_text, p.race_text), 50), NULL,
+       left(coalesce(p.eth_code || ' ' || p.eth_text, p.eth_text), 50), NULL
 FROM (
     SELECT id,
            res->>'gender' AS gender,
@@ -77,7 +77,7 @@ WHERE p.birth IS NOT NULL;   -- year_of_birth is required; QC counts the drops
 
 INSERT INTO death
 SELECT m.omop_id, fhir_date(f.res->>'deceasedDateTime'), fhir_ts(f.res->>'deceasedDateTime'),
-       const('type', 'ehr'), 0, NULL, 0
+       const('type', 'ehr'), NULL, NULL, NULL
 FROM stg.fhir f
 JOIN stg.id_map m ON m.resource_type = 'Patient' AND m.fhir_id = f.id
 WHERE f.resource_type = 'Patient' AND (f.res->>'deceasedDateTime') IS NOT NULL;
