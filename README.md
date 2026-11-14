@@ -51,7 +51,7 @@ when it runs past the memory limit, so less memory makes the run slower but it s
 
 ```
 <outdir>/
-  omop/<table>.parquet     14 CDM 5.4 tables in official column order (list below)
+  omop/<table>.parquet     16 CDM 5.4 tables in official column order (list below)
   source_id_map.parquet    resource_type, fhir_id -> omop_id (provenance back to FHIR)
   qc.csv                   check_name, table_name, value, status (ok|warn|fail), detail
   pipeline_info/software_versions.yml
@@ -59,7 +59,7 @@ when it runs past the memory limit, so less memory makes the run slower but it s
 
 Tables: `person`, `observation_period`, `visit_occurrence`, `condition_occurrence`,
 `drug_exposure`, `procedure_occurrence`, `device_exposure`, `measurement`, `observation`,
-`death`, `location`, `care_site`, `provider`, `cdm_source`.
+`death`, `location`, `care_site`, `provider`, `condition_era`, `drug_era`, `cdm_source`.
 
 ## How it works
 
@@ -69,12 +69,13 @@ session:
 | Stage | |
 |---|---|
 | `01_load_fhir.sql` | `read_json_objects` loads every resource as **untyped JSON** into `stg.fhir`, and flattens Bundles into their entries. A missing resource type or a new field can't break the load. Builds integer ids (`stg.id_map`, ordered by FHIR id, so the same input gives the same ids) and an index to resolve conditional references (`Practitioner?identifier=…`) |
-| `02_vocab_*.sql` | Loads the Athena vocabulary, keeping only `Maps to` relationships. Without `--vocab-dir`, creates empty tables |
+| `02_vocab_*.sql`, `02_ancestor_*.sql` | Loads the Athena vocabulary, keeping only `Maps to` relationships, plus drug → RxNorm ingredient from `CONCEPT_ANCESTOR` if that file is present. Without `--vocab-dir`, creates empty tables |
 | `03_constants.sql` | FHIR system URI → OMOP vocabulary, and the fixed concept ids for gender, race, ethnicity, visit class and type concepts |
 | `10_cdm_ddl.sql` | CDM 5.4 DDL for the tables listed above |
 | `20_person.sql`, `30_visit.sql` | Patient/Practitioner/Organization → person, death, location, provider, care_site. Encounter → visit_occurrence |
 | `40_events.sql` | All clinical resources go into one event table (`stg.event`), then concept lookup (`stg.event_mapped`) |
 | `50_domains.sql` | Writes each event to the table for its **domain** |
+| `55_eras.sql` | condition_era and drug_era, using the OHDSI rules: same-concept records 30 days apart or less merge into one era. drug_era rolls exposures up to their ingredient (needs `CONCEPT_ANCESTOR.csv`), and `gap_days` is the uncovered days inside the era |
 | `60_period_and_source.sql` | observation_period (span of each person's activity), cdm_source |
 | `90_qc.sql` | QC checks (listed below) |
 
@@ -132,13 +133,12 @@ Athena files present. `run_dqd.R` then runs `executeDqChecks` and writes:
 
 Needs R >= 4.2 and a JDK. `run.sh` finds `JAVA_HOME` from `java` on PATH.
 
-Results on the test fixture with `vocab_mini` (DQD 2.9.1): 2,384 checks, 1,089 passed,
-20 failed, 0 errors, 1,275 not applicable. Most of the not-applicable checks are on empty
+Results on the test fixture with `vocab_mini` (DQD 2.9.1): 2,384 checks, 1,164 passed,
+17 failed, 0 errors, 1,203 not applicable. Most of the not-applicable checks are on empty
 tables.
 
-- 17 of the failures are codes missing from the 30-concept test vocabulary. A real Athena
-  vocabulary will give the meaningful numbers.
-- The other 3 are the missing `condition_era` and `drug_era` tables.
+All 17 failures are codes missing from the ~30-concept test vocabulary. A real Athena
+vocabulary will give the meaningful numbers.
 
 ## Test data
 
@@ -166,7 +166,7 @@ These are deliberate scope cuts for the prototype, roughly in priority order:
 - **Vocabulary:** only `Maps to` is used. There's no `Maps to value`, so the value isn't split
   out for "finding + value" codes, and the first coding of each CodeableConcept is used even
   if a later coding maps.
-- **Not mapped:** `condition_era`, `drug_era`, `dose_era`, `visit_detail`, `note` (from
+- **Not mapped:** `dose_era`, `visit_detail`, `note` (from
   DocumentReference), `specimen`, `cost` / `payer_plan_period` (from Claim/EOB), and
   DiagnosticReport. Its results are already mapped as Observations.
 - **Drugs:** no `days_supply` or `quantity` from dispenseRequest, and no route.

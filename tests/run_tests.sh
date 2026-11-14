@@ -31,6 +31,8 @@ check "$o" "gender/race/ethnicity constants applied" \
   "SELECT bool_and(gender_concept_id IN (8507, 8532) AND race_concept_id > 0 AND ethnicity_concept_id > 0) FROM 'person.parquet'"
 check "$o" "all visits typed and resolved to a care site" \
   "SELECT bool_and(visit_concept_id > 0 AND care_site_id IS NOT NULL) FROM 'visit_occurrence.parquet'"
+check "$o" "no eras without vocabulary (all concept ids are 0)" \
+  "SELECT (SELECT count(*) FROM 'condition_era.parquet') + (SELECT count(*) FROM 'drug_era.parquet') = 0"
 check "$o" "clinical concept ids are 0 without vocabulary" \
   "SELECT bool_and(condition_concept_id = 0) FROM 'condition_occurrence.parquet'"
 check "$o" "BP panel split into systolic + diastolic, panel code dropped" \
@@ -82,6 +84,56 @@ check "$o" "vocabulary version recorded" \
 qc "$o" "QC: constants all present in vocabulary" \
   "count(*) FILTER (WHERE check_name = 'constant_concept_missing') = 0"
 qc "$o" "QC: unmapped codes reported" "count(*) FILTER (WHERE check_name = 'top_unmapped_codes') > 0"
+
+check "$o" "condition_era covers every mapped condition occurrence exactly once" \
+  "SELECT (SELECT sum(condition_occurrence_count) FROM 'condition_era.csv')
+        = (SELECT count(*) FROM 'condition_occurrence.csv' WHERE condition_concept_id <> 0)"
+check "$o" "consecutive eras of the same concept are > 30 days apart" \
+  "SELECT count(*) = 0 FROM (
+     SELECT condition_era_start_date - lag(condition_era_end_date) OVER (
+              PARTITION BY person_id, condition_concept_id ORDER BY condition_era_start_date) AS gap
+     FROM 'condition_era.csv') WHERE gap <= 30"
+check "$o" "drug_era rolls up to ingredients only" \
+  "SELECT count(*) > 0 AND bool_and(drug_concept_id IN (2000000031, 2000000042, 2000000051)) FROM 'drug_era.csv'"
+check "$o" "drug_era counts every exposure with an ingredient" \
+  "SELECT (SELECT sum(drug_exposure_count) FROM 'drug_era.csv')
+        = (SELECT count(*) FROM 'drug_exposure.csv'
+           WHERE drug_concept_id IN (2000000030, 2000000031, 2000000041, 2000000042, 2000000051))"
+check "$o" "gap_days within [0, era length]" \
+  "SELECT bool_and(gap_days BETWEEN 0 AND drug_era_end_date - drug_era_start_date) FROM 'drug_era.csv'"
+
+echo "== era logic (hand-computed cases)"
+got=$( {
+  echo "CREATE SCHEMA stg;"
+  cat "$root/sql/10_cdm_ddl.sql"
+  cat <<'SQL'
+CREATE TABLE stg.ingredient AS SELECT 100 AS drug_concept_id, 1000 AS ingredient_concept_id;
+INSERT INTO condition_occurrence (condition_occurrence_id, person_id, condition_concept_id,
+    condition_start_date, condition_end_date, condition_type_concept_id) VALUES
+  (1, 1, 10, DATE '2020-01-01', DATE '2020-01-10', 0),
+  (2, 1, 10, DATE '2020-01-03', DATE '2020-01-05', 0),   -- nested in the first
+  (3, 1, 10, DATE '2020-02-05', DATE '2020-02-06', 0),   -- 26 days after: same era
+  (4, 1, 10, DATE '2020-04-01', NULL, 0),                -- 55 days after: new era, end = +1
+  (5, 1, 0,  DATE '2020-01-01', NULL, 0);                -- concept 0: no era
+INSERT INTO drug_exposure (drug_exposure_id, person_id, drug_concept_id, drug_exposure_start_date,
+    drug_exposure_end_date, drug_type_concept_id) VALUES
+  (1, 1, 100, DATE '2020-01-01', DATE '2020-01-11', 0),
+  (2, 1, 100, DATE '2020-01-05', DATE '2020-01-20', 0),  -- overlaps: covered Jan 1-20 (19 d)
+  (3, 1, 100, DATE '2020-02-10', DATE '2020-02-15', 0),  -- 21-day gap: same era (5 d)
+  (4, 1, 100, DATE '2020-06-01', DATE '2020-06-01', 0),  -- new era; same-day end -> +1
+  (5, 1, 999, DATE '2020-01-01', DATE '2020-01-02', 0);  -- no ingredient: no era
+SQL
+  cat "$root/sql/55_eras.sql"
+  echo "SELECT string_agg(x, ' ' ORDER BY x) FROM (
+          SELECT 'C' || condition_concept_id || ':' || condition_era_start_date || '/' ||
+                 condition_era_end_date || '/' || condition_occurrence_count AS x FROM condition_era
+          UNION ALL
+          SELECT 'D' || drug_concept_id || ':' || drug_era_start_date || '/' || drug_era_end_date
+                 || '/' || drug_exposure_count || '/' || gap_days FROM drug_era);"
+} | duckdb -noheader -list 2>&1 | tail -1)
+want="C10:2020-01-01/2020-02-06/3 C10:2020-04-01/2020-04-02/1 D1000:2020-01-01/2020-02-15/3/21 D1000:2020-06-01/2020-06-02/1/0"
+if [[ $got == "$want" ]]; then echo "  ok    eras match hand-computed result"
+else echo "  FAIL  eras: got '$got', want '$want'"; fails=$((fails + 1)); fi
 
 echo "== Bundle JSON input (Synthea default export)"
 o=$work/bundle

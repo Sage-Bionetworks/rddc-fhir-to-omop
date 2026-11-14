@@ -97,7 +97,16 @@ FROM (SELECT 'visit_occurrence' AS t, n FROM person_orphans('visit_occurrence')
       UNION ALL SELECT 'measurement', n FROM person_orphans('measurement')
       UNION ALL SELECT 'observation', n FROM person_orphans('observation')
       UNION ALL SELECT 'death', n FROM person_orphans('death')
-      UNION ALL SELECT 'observation_period', n FROM person_orphans('observation_period'));
+      UNION ALL SELECT 'observation_period', n FROM person_orphans('observation_period')
+      UNION ALL SELECT 'condition_era', n FROM person_orphans('condition_era')
+      UNION ALL SELECT 'drug_era', n FROM person_orphans('drug_era'));
+
+-- drug_era needs CONCEPT_ANCESTOR to roll drugs up to ingredients.
+INSERT INTO stg.qc
+SELECT 'drug_era_skipped', 'drug_era', (SELECT count(*) FROM drug_exposure WHERE drug_concept_id <> 0),
+       'warn', 'mapped drug exposures but no ingredient roll-up (CONCEPT_ANCESTOR.csv not in --vocab-dir)'
+WHERE (SELECT count(*) FROM stg.ingredient) = 0
+  AND (SELECT count(*) FROM drug_exposure WHERE drug_concept_id <> 0) > 0;
 
 INSERT INTO stg.qc
 SELECT 'visit_orphans', t, n, CASE WHEN n = 0 THEN 'ok' ELSE 'fail' END,
@@ -135,5 +144,7 @@ SELECT * FROM n_rows('location')
     UNION ALL SELECT * FROM n_rows('device_exposure')
     UNION ALL SELECT * FROM n_rows('measurement')
     UNION ALL SELECT * FROM n_rows('observation')
+    UNION ALL SELECT * FROM n_rows('condition_era')
+    UNION ALL SELECT * FROM n_rows('drug_era')
     UNION ALL SELECT * FROM n_rows('cdm_source')
 );

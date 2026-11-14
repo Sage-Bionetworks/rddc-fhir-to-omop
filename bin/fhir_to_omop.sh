@@ -63,7 +63,7 @@ file_list="[$(for f in "${inputs[@]}"; do printf '%s,' "$(sq "$f")"; done | sed 
 
 tables=(location care_site provider person observation_period death visit_occurrence
         condition_occurrence drug_exposure procedure_occurrence device_exposure
-        measurement observation cdm_source)
+        measurement observation condition_era drug_era cdm_source)
 copy_opts=$([[ $format == parquet ]] && echo "FORMAT parquet, COMPRESSION zstd" || echo "FORMAT csv, HEADER")
 
 {
@@ -80,8 +80,9 @@ copy_opts=$([[ $format == parquet ]] && echo "FORMAT parquet, COMPRESSION zstd" 
   echo "SET VARIABLE source_abbr = $(sq "${source_name// /_}");"
   echo "SET VARIABLE cdm_holder = $(sq "${CDM_HOLDER:-Sage Bionetworks}");"
   stages=(01_load_fhir.sql "$([[ -n $vocab_dir ]] && echo 02_vocab_athena.sql || echo 02_vocab_empty.sql)"
+          "$([[ -n $vocab_dir && -f $vocab_dir/CONCEPT_ANCESTOR.csv ]] && echo 02_ancestor_athena.sql || echo 02_ancestor_empty.sql)"
           03_constants.sql 10_cdm_ddl.sql 20_person.sql 30_visit.sql 40_events.sql
-          50_domains.sql 60_period_and_source.sql 90_qc.sql)
+          50_domains.sql 55_eras.sql 60_period_and_source.sql 90_qc.sql)
   for s in "${stages[@]}"; do
     echo ".print '== $s'"
     cat "$sql_dir/$s"

@@ -122,3 +122,13 @@ CREATE OR REPLACE TABLE cdm_source (
     source_release_date DATE NOT NULL, cdm_release_date DATE NOT NULL,
     cdm_version VARCHAR(10), cdm_version_concept_id INTEGER NOT NULL,
     vocabulary_version VARCHAR(20) NOT NULL);
+
+CREATE OR REPLACE TABLE condition_era (
+    condition_era_id INTEGER NOT NULL, person_id INTEGER NOT NULL,
+    condition_concept_id INTEGER NOT NULL, condition_era_start_date DATE NOT NULL,
+    condition_era_end_date DATE NOT NULL, condition_occurrence_count INTEGER);
+
+CREATE OR REPLACE TABLE drug_era (
+    drug_era_id INTEGER NOT NULL, person_id INTEGER NOT NULL, drug_concept_id INTEGER NOT NULL,
+    drug_era_start_date DATE NOT NULL, drug_era_end_date DATE NOT NULL,
+    drug_exposure_count INTEGER, gap_days INTEGER);

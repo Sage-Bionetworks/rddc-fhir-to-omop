@@ -33,3 +33,5 @@ concept_id	concept_name	domain_id	vocabulary_id	concept_class_id	standard_concep
 2000000041	TEST influenza vaccine	Drug	RxNorm	Clinical Drug	S	TEST-FLU	19700101	20991231	
 2000000050	Subcutaneous immunotherapy (procedure)	Procedure	SNOMED	Procedure	S	180256009	19700101	20991231	
 2000000051	TEST allergenic extract	Drug	RxNorm	Ingredient	S	TEST-ALLERGEN	19700101	20991231	
+2000000031	TEST lisinopril	Drug	RxNorm	Ingredient	S	TEST-LISINOPRIL	19700101	20991231	
+2000000042	TEST influenza virus vaccine	Drug	RxNorm	Ingredient	S	TEST-FLU-ING	19700101	20991231	
