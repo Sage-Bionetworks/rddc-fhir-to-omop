@@ -1,0 +1,8 @@
+.tools/
+/work/
+/results/
+/data/
+.nextflow/
+.nextflow.log*
+*.duckdb
+*.duckdb.wal

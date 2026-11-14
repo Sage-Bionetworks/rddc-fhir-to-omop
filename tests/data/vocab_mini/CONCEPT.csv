@@ -1,0 +1,34 @@
+concept_id	concept_name	domain_id	vocabulary_id	concept_class_id	standard_concept	concept_code	valid_start_date	valid_end_date	invalid_reason
+8507	MALE	Gender	Gender	Gender	S	M	19700101	20991231	
+8532	FEMALE	Gender	Gender	Gender	S	F	19700101	20991231	
+8527	White	Race	Race	Race	S	5	19700101	20991231	
+8516	Black or African American	Race	Race	Race	S	3	19700101	20991231	
+8515	Asian	Race	Race	Race	S	2	19700101	20991231	
+8657	American Indian or Alaska Native	Race	Race	Race	S	1	19700101	20991231	
+8557	Native Hawaiian or Other Pacific Islander	Race	Race	Race	S	4	19700101	20991231	
+38003563	Hispanic or Latino	Ethnicity	Ethnicity	Ethnicity	S	Hispanic	19700101	20991231	
+38003564	Not Hispanic or Latino	Ethnicity	Ethnicity	Ethnicity	S	Not Hispanic	19700101	20991231	
+9201	Inpatient Visit	Visit	Visit	Visit	S	IP	19700101	20991231	
+9202	Outpatient Visit	Visit	Visit	Visit	S	OP	19700101	20991231	
+9203	Emergency Room Visit	Visit	Visit	Visit	S	ER	19700101	20991231	
+581476	Home Visit	Visit	Visit	Visit	S	IH	19700101	20991231	
+5083	Telehealth	Visit	CMS Place of Service	Visit	S	02	19700101	20991231	
+32817	EHR	Type Concept	Type Concept	Type Concept	S	OMOP4976890	19700101	20991231	
+32818	EHR administration record	Type Concept	Type Concept	Type Concept	S	OMOP4976891	19700101	20991231	
+32838	EHR prescription	Type Concept	Type Concept	Type Concept	S	OMOP4976911	19700101	20991231	
+756265	OMOP CDM Version 5.4.0	Metadata	CDM	CDM	S	CDM v5.4.0	19700101	20991231	
+8876	millimeter mercury column	Unit	UCUM	Unit	S	mm[Hg]	19700101	20991231	
+2000000001	Viral sinusitis (disorder)	Condition	SNOMED	Clinical Finding	S	444814009	19700101	20991231	
+2000000002	Stress (finding)	Observation	SNOMED	Clinical Finding	S	73595000	19700101	20991231	
+2000000003	Medication review due (situation)	Observation	SNOMED	Context-dependent	S	314529007	19700101	20991231	
+2000000010	Heart rate	Measurement	LOINC	Clinical Observation	S	8867-4	19700101	20991231	
+2000000011	Body weight	Measurement	LOINC	Clinical Observation	S	29463-7	19700101	20991231	
+2000000012	Systolic blood pressure	Measurement	LOINC	Clinical Observation	S	8480-6	19700101	20991231	
+2000000013	Diastolic blood pressure	Measurement	LOINC	Clinical Observation	S	8462-4	19700101	20991231	
+2000000020	kilogram	Unit	UCUM	Unit	S	kg	19700101	20991231	
+2000000021	per minute	Unit	UCUM	Unit	S	/min	19700101	20991231	
+2000000030	lisinopril 10 MG Oral Tablet	Drug	RxNorm	Clinical Drug	S	314076	19700101	20991231	
+2000000040	Influenza, split virus, trivalent, PF	Drug	CVX	CVX		140	19700101	20991231	
+2000000041	TEST influenza vaccine	Drug	RxNorm	Clinical Drug	S	TEST-FLU	19700101	20991231	
+2000000050	Subcutaneous immunotherapy (procedure)	Procedure	SNOMED	Procedure	S	180256009	19700101	20991231	
+2000000051	TEST allergenic extract	Drug	RxNorm	Ingredient	S	TEST-ALLERGEN	19700101	20991231	
