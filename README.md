@@ -107,7 +107,7 @@ Timestamps keep the local wall-clock time and drop the UTC offset, so `*_date` a
 - events dropped because no person resolves or there's no start date
 - encounter references with no matching visit
 - percentage of unmapped concepts per domain, and the top unmapped codes
-- hard-coded constants missing from the loaded vocabulary (`fail`)
+- hard-coded constants missing, non-standard or deprecated in the loaded vocabulary (`fail`)
 - person and visit foreign-key orphans (`fail`)
 - persons with no observation period
 - source values longer than 50 characters
@@ -137,8 +137,27 @@ Results on the test fixture with `vocab_mini` (DQD 2.9.1): 2,384 checks, 1,164 p
 17 failed, 0 errors, 1,203 not applicable. Most of the not-applicable checks are on empty
 tables.
 
-All 17 failures are codes missing from the ~30-concept test vocabulary. A real Athena
-vocabulary will give the meaningful numbers.
+All 17 failures are codes missing from the ~30-concept test vocabulary.
+
+With the full Athena vocabulary (v5.0 29-AUG-26: SNOMED, LOINC, RxNorm, RxNorm
+Extension, UCUM and others; no CVX) on 100 fresh Synthea patients (`make synthea N=100
+SEED=1`): **2,384 checks, 1,295 passed, 8 failed, 0 errors**. The run takes about 50 s.
+Unmapped rows are 1.1% for conditions, 1.2% for procedures, and 0% for measurements and
+observations. None of the 8 failures is an ETL bug:
+
+| Failure | Cause |
+|---|---|
+| Drug concepts 22% unmapped (3 checks) | Immunizations are CVX, which wasn't in this bundle. Add CVX in Athena |
+| Device concepts 18% unmapped | Synthea records "Operating room" and "Hospital bed" as devices; both are non-standard SNOMED with no mapping |
+| Measurement / observation units 8% / 78% unmapped | UCUM annotations (`{score}`, `{#}`, `{nominal}`) have no OMOP unit concept |
+| `plausibleUnitConceptIds` | Synthea reports RDW (LOINC 788-0, a %) in `fL` |
+| `fkClass` on `DRUG_STRENGTH` | Inside the Athena vocabulary data, not ETL output |
+
+Fixed after the first run with the full vocabulary:
+
+- Telehealth visits now use concept 722455; 5083 is no longer standard in this release.
+- Synthea's UCUM spellings now resolve through `stg.ucum_alias`, e.g. `U/L` → Athena
+  `[U]/L`.
 
 ## Test data
 

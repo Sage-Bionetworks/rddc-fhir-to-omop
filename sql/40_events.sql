@@ -144,7 +144,9 @@ SELECT c.system, c.code,
        tgt.domain_id AS domain_id
 FROM stg.code c
 LEFT JOIN stg.system_vocab sv ON sv.system = c.system
-LEFT JOIN stg.concept src ON src.vocabulary_id = sv.vocabulary_id AND src.concept_code = c.code
+LEFT JOIN stg.ucum_alias ua ON sv.vocabulary_id = 'UCUM' AND ua.code = c.code
+LEFT JOIN stg.concept src ON src.vocabulary_id = sv.vocabulary_id
+      AND src.concept_code = coalesce(ua.athena_code, c.code)
 LEFT JOIN stg.maps_to mt ON mt.concept_id_1 = src.concept_id
 LEFT JOIN stg.concept tgt ON tgt.concept_id = mt.concept_id_2 AND tgt.standard_concept = 'S';
 

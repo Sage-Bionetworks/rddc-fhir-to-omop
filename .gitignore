@@ -6,3 +6,6 @@
 .nextflow.log*
 *.duckdb
 *.duckdb.wal
+
+# Vocabulary downloads (Athena bundles are ~1 GB zipped)
+*.zip

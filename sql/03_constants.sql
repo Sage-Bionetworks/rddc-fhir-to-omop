@@ -1,5 +1,6 @@
 -- Fixed concept ids and code-system lookups. All of these are standard OMOP concepts;
--- when a vocabulary is loaded, the QC stage checks they exist (check: constant_concept_missing).
+-- when a vocabulary is loaded, QC fails any that are missing, non-standard or deprecated
+-- (check: constant_concept_invalid).
 
 -- FHIR code system URI -> OMOP vocabulary_id.
 CREATE OR REPLACE TABLE stg.system_vocab (system VARCHAR, vocabulary_id VARCHAR);
@@ -13,6 +14,20 @@ INSERT INTO stg.system_vocab VALUES
     ('http://hl7.org/fhir/sid/icd-9-cm',           'ICD9CM'),
     ('http://www.ama-assn.org/go/cpt',             'CPT4'),
     ('http://unitsofmeasure.org',                  'UCUM');
+
+-- UCUM codes as FHIR/Synthea write them -> the concept_code Athena uses for the same unit.
+-- Athena's UCUM vocabulary uses its own spellings for some units, so an exact-code lookup
+-- misses them. Each target was checked by name against Athena v5.0 29-AUG-26.
+-- UCUM annotations ({score}, {#}, {nominal}, ...) have no OMOP unit concept and stay 0.
+CREATE OR REPLACE TABLE stg.ucum_alias (code VARCHAR, athena_code VARCHAR);
+INSERT INTO stg.ucum_alias VALUES
+    ('U/L',              '[U]/L'),                  -- 8645 unit per liter
+    ('kU/L',             '10*3.[U]/L'),             -- 8810 kilounit per liter
+    ('m[IU]/L',          '10*-3.[iU]/L'),           -- 9040 milli-international unit per liter
+    ('/a',               '/y'),                     -- 44777560 per year
+    ('mL/min/{1.73_m2}', 'mL/min/(173.10*-2.m2)'),  -- 720870 mL per minute per 1.73 m2
+    ('[pH]',             'pH'),                     -- 8482 pH
+    ('{INR}',            '{ratio}');                -- 8523 ratio (OHDSI convention for INR)
 
 CREATE OR REPLACE TABLE stg.constant_concept (name VARCHAR, code VARCHAR, concept_id INTEGER);
 INSERT INTO stg.constant_concept VALUES
@@ -36,7 +51,7 @@ INSERT INTO stg.constant_concept VALUES
     ('visit', 'SS',     9201),
     ('visit', 'OBSENC', 9202),
     ('visit', 'HH',     581476), -- Home Visit
-    ('visit', 'VR',     5083),   -- Telehealth
+    ('visit', 'VR',     722455), -- Telehealth (5083 is non-standard since v5.0 2024+)
     -- Type concepts (provenance)
     ('type', 'ehr',                  32817), -- EHR
     ('type', 'ehr_prescription',     32838), -- EHR prescription

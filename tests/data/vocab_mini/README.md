@@ -5,7 +5,8 @@ A hand-made, Athena-format (tab-delimited) vocabulary for tests. **Not real voca
 - Concept `0` ("No matching concept") is included, as in every real Athena download; DQD
   foreign-key checks fail on 0 without it.
 - Other concept ids below 2,000,000,000 are the real OMOP ids for the constants the ETL hard-codes
-  (gender, race, ethnicity, visit, type concepts, CDM version, `mm[Hg]`).
+  (gender, race, ethnicity, visit, type concepts, CDM version, `mm[Hg]`, `[U]/L`). 5083 is
+  included as non-standard, as in current Athena releases.
 - Concept ids at or above 2,000,000,000 are fabricated (OMOP's local-concept range), attached
   to real codes that occur in `../fhir`, so `tests/run_tests.sh` can check:
   - domain routing: SNOMED `73595000` (Stress, a *finding*) is a FHIR Condition but lands in

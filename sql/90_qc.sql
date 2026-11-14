@@ -79,11 +79,17 @@ FROM (SELECT domain, coding->>'system' AS system, source_value AS code, count(*)
       GROUP BY domain, coding->>'system', source_value)
 WHERE rk <= 5;
 
--- A constant concept id that doesn't exist in the loaded vocabulary is an ETL bug.
+-- A hard-coded concept id that is missing, non-standard or deprecated in the loaded
+-- vocabulary is an ETL bug (vocabulary releases do retire concepts).
 INSERT INTO stg.qc
-SELECT 'constant_concept_missing', k.name, k.concept_id, 'fail', k.code
+SELECT 'constant_concept_invalid', k.name, k.concept_id, 'fail',
+       k.code || ': ' || CASE WHEN c.concept_id IS NULL THEN 'not in vocabulary'
+                              WHEN c.invalid_reason IS NOT NULL THEN 'invalid_reason ' || c.invalid_reason
+                              ELSE 'not standard' END
 FROM stg.constant_concept k
-WHERE (SELECT loaded FROM stg.vocab_flag) AND k.concept_id NOT IN (SELECT concept_id FROM stg.concept);
+LEFT JOIN stg.concept c ON c.concept_id = k.concept_id
+WHERE (SELECT loaded FROM stg.vocab_flag)
+  AND (c.concept_id IS NULL OR c.standard_concept IS DISTINCT FROM 'S' OR c.invalid_reason IS NOT NULL);
 
 -- Referential integrity.
 INSERT INTO stg.qc

@@ -13,7 +13,6 @@ concept_id	concept_name	domain_id	vocabulary_id	concept_class_id	standard_concep
 9202	Outpatient Visit	Visit	Visit	Visit	S	OP	19700101	20991231	
 9203	Emergency Room Visit	Visit	Visit	Visit	S	ER	19700101	20991231	
 581476	Home Visit	Visit	Visit	Visit	S	IH	19700101	20991231	
-5083	Telehealth	Visit	CMS Place of Service	Visit	S	02	19700101	20991231	
 32817	EHR	Type Concept	Type Concept	Type Concept	S	OMOP4976890	19700101	20991231	
 32818	EHR administration record	Type Concept	Type Concept	Type Concept	S	OMOP4976891	19700101	20991231	
 32838	EHR prescription	Type Concept	Type Concept	Type Concept	S	OMOP4976911	19700101	20991231	
@@ -35,3 +34,6 @@ concept_id	concept_name	domain_id	vocabulary_id	concept_class_id	standard_concep
 2000000051	TEST allergenic extract	Drug	RxNorm	Ingredient	S	TEST-ALLERGEN	19700101	20991231	
 2000000031	TEST lisinopril	Drug	RxNorm	Ingredient	S	TEST-LISINOPRIL	19700101	20991231	
 2000000042	TEST influenza virus vaccine	Drug	RxNorm	Ingredient	S	TEST-FLU-ING	19700101	20991231	
+722455	Telehealth	Visit	Visit	Visit	S	OMOP5556618	19700101	20991231	
+8645	unit per liter	Unit	UCUM	Unit	S	[U]/L	19700101	20991231	
+5083	Telehealth Provided Other than in Patient’s Home	Visit	CMS Place of Service	Visit		02	19700101	20991231	

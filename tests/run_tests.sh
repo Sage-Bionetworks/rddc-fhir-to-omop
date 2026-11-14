@@ -77,12 +77,16 @@ check "$o" "optional concept fields without source data are NULL, not 0" \
   "SELECT (SELECT count(*) FROM 'drug_exposure.csv' WHERE route_concept_id IS NOT NULL) = 0
       AND (SELECT count(*) FROM 'observation.csv' WHERE unit_source_value IS NULL AND unit_concept_id IS NOT NULL) = 0
       AND (SELECT count(*) FROM 'measurement.csv' WHERE operator_concept_id IS NOT NULL) = 0"
+check "$o" "UCUM alias: U/L resolves to Athena's [U]/L (8645)" \
+  "SELECT count(*) > 0 AND bool_and(unit_concept_id = 8645) FROM 'measurement.csv' WHERE unit_source_value = 'U/L'"
+check "$o" "telehealth visits use the standard concept 722455" \
+  "SELECT count(*) = 0 FROM 'visit_occurrence.csv' WHERE visit_concept_id = 5083"
 check "$o" "ids unique within each table" \
   "SELECT count(*) = count(DISTINCT drug_exposure_id) FROM 'drug_exposure.csv'"
 check "$o" "vocabulary version recorded" \
   "SELECT vocabulary_version = 'mini-test 2026-11' FROM 'cdm_source.csv'"
 qc "$o" "QC: constants all present in vocabulary" \
-  "count(*) FILTER (WHERE check_name = 'constant_concept_missing') = 0"
+  "count(*) FILTER (WHERE check_name = 'constant_concept_invalid') = 0"
 qc "$o" "QC: unmapped codes reported" "count(*) FILTER (WHERE check_name = 'top_unmapped_codes') > 0"
 
 check "$o" "condition_era covers every mapped condition occurrence exactly once" \
