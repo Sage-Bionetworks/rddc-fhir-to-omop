@@ -193,3 +193,7 @@ These are deliberate scope cuts for the prototype, roughly in priority order:
   across incremental loads.
 - **Validation:** checked by `tests/run_tests.sh`, `qc.csv` and DQD (`make dqd`). DQD
   hasn't been run with a full Athena vocabulary yet.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
