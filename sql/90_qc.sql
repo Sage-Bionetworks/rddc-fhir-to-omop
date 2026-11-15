@@ -114,6 +114,17 @@ SELECT 'drug_era_skipped', 'drug_era', (SELECT count(*) FROM drug_exposure WHERE
 WHERE (SELECT count(*) FROM stg.ingredient) = 0
   AND (SELECT count(*) FROM drug_exposure WHERE drug_concept_id <> 0) > 0;
 
+-- Mapped drugs with no RxNorm ingredient ancestor can't be in drug_era (e.g. CVX vaccines
+-- in the 2026 Athena releases).
+INSERT INTO stg.qc
+SELECT 'drug_without_ingredient', 'drug_era', count(*), 'warn',
+       'mapped drug exposures with no RxNorm ingredient ancestor (not in drug_era)'
+FROM drug_exposure
+WHERE drug_concept_id <> 0
+  AND drug_concept_id NOT IN (SELECT drug_concept_id FROM stg.ingredient)
+  AND (SELECT count(*) FROM stg.ingredient) > 0
+HAVING count(*) > 0;
+
 INSERT INTO stg.qc
 SELECT 'visit_orphans', t, n, CASE WHEN n = 0 THEN 'ok' ELSE 'fail' END,
        'visit_occurrence_id not in visit_occurrence'

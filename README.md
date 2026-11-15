@@ -139,15 +139,16 @@ tables.
 
 All 17 failures are codes missing from the ~30-concept test vocabulary.
 
-With the full Athena vocabulary (v5.0 29-AUG-26: SNOMED, LOINC, RxNorm, RxNorm
-Extension, UCUM and others; no CVX) on 100 fresh Synthea patients (`make synthea N=100
-SEED=1`): **2,384 checks, 1,295 passed, 8 failed, 0 errors**. The run takes about 50 s.
-Unmapped rows are 1.1% for conditions, 1.2% for procedures, and 0% for measurements and
-observations. None of the 8 failures is an ETL bug:
+With the full Athena vocabulary (v5.0 29-AUG-26, 134 vocabularies including SNOMED,
+LOINC, RxNorm, RxNorm Extension, CVX and UCUM) on 100 fresh Synthea patients (`make
+synthea N=100 SEED=1`): **2,384 checks, 1,298 passed, 5 failed, 0 errors**. The run takes
+about 1 minute. Unmapped rows are 0% for drugs, measurements and observations, 1.0% for
+procedures and 1.1% for conditions. The unmapped codes are deprecated SNOMED codes with no
+replacement, and Synthea's placeholder LOINC codes `X9999-*`. None of the 5 failures is an
+ETL bug:
 
 | Failure | Cause |
 |---|---|
-| Drug concepts 22% unmapped (3 checks) | Immunizations are CVX, which wasn't in this bundle. Add CVX in Athena |
 | Device concepts 18% unmapped | Synthea records "Operating room" and "Hospital bed" as devices; both are non-standard SNOMED with no mapping |
 | Measurement / observation units 8% / 78% unmapped | UCUM annotations (`{score}`, `{#}`, `{nominal}`) have no OMOP unit concept |
 | `plausibleUnitConceptIds` | Synthea reports RDW (LOINC 788-0, a %) in `fL` |
@@ -156,6 +157,8 @@ observations. None of the 8 failures is an ETL bug:
 Fixed after the first run with the full vocabulary:
 
 - Telehealth visits now use concept 722455; 5083 is no longer standard in this release.
+- An earlier bundle without CVX left 22% of drug rows unmapped (all immunizations).
+  Include CVX when downloading from Athena.
 - Synthea's UCUM spellings now resolve through `stg.ucum_alias`, e.g. `U/L` → Athena
   `[U]/L`.
 
@@ -188,7 +191,9 @@ These are deliberate scope cuts for the prototype, roughly in priority order:
 - **Not mapped:** `dose_era`, `visit_detail`, `note` (from
   DocumentReference), `specimen`, `cost` / `payer_plan_period` (from Claim/EOB), and
   DiagnosticReport. Its results are already mapped as Observations.
-- **Drugs:** no `days_supply` or `quantity` from dispenseRequest, and no route.
+- **Drugs:** no `days_supply` or `quantity` from dispenseRequest, and no route. Vaccines
+  (CVX) have no RxNorm ingredient ancestor in current Athena releases, so they aren't in
+  `drug_era`. QC reports them as `drug_without_ingredient`.
 - **IDs:** `INTEGER` ids come from `row_number`, so they're stable for the same input but not
   across incremental loads.
 - **Validation:** checked by `tests/run_tests.sh`, `qc.csv` and DQD (`make dqd`), including
