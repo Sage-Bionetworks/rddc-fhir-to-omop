@@ -54,11 +54,15 @@ SELECT m.omop_id,
        (SELECT location_id FROM location l WHERE l.location_id = m.omop_id),
        omop_id('Practitioner', resolve_ref(p.gp_ref)),
        NULL,
-       p.id, p.gender, NULL,
+       -- person_source_value: the subject ID the batch's sidecar uses (see --subject-id)
+       CASE WHEN getvariable('subject_id_mode') = 'identifier' THEN p.ident ELSE p.id END,
+       p.gender, NULL,
        left(coalesce(p.race_code || ' ' || p.race_text, p.race_text), 50), NULL,
        left(coalesce(p.eth_code || ' ' || p.eth_text, p.eth_text), 50), NULL
 FROM (
     SELECT id,
+           list_filter(json_extract(res, '$.identifier[*]'),
+                       lambda i: i->>'system' = getvariable('identifier_system'))[1]->>'value' AS ident,
            res->>'gender' AS gender,
            TRY_CAST(res->>'birthDate' AS DATE) AS birth,
            res->'generalPractitioner'->0->>'reference' AS gp_ref,

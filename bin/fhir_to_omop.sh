@@ -5,16 +5,29 @@
 #   fhir_to_omop.sh --fhir-dir DIR --out-dir DIR [--vocab-dir DIR] [--sql-dir DIR]
 #                   [--threads N] [--memory 8GB] [--format parquet|csv]
 #                   [--db FILE] [--source-name NAME] [--max-object-mb 128] [--strict]
+#                   [--subjects CSV] [--subject-id id|identifier] [--identifier-system URI]
+#                   [--source-abbr ABBR] [--source-release-date YYYY-MM-DD] [--source-reference REF]
+#                   [--rejected-files N]
 #
 # Writes <out-dir>/omop/<table>.{parquet,csv}, <out-dir>/source_id_map.<ext>,
 # <out-dir>/qc.csv. --db keeps the DuckDB database file (default: temporary).
 # --strict exits 3 if any QC check has status 'fail'.
+# FHIR files are found anywhere under --fhir-dir (*.ndjson, *.json, optionally .gz).
+#
+# Subjects (from the batch's sidecar): --subject-id says what person_source_value holds,
+# Patient.id (id, default) or the Patient.identifier value of --identifier-system
+# (identifier). --subjects is a CSV with a subject_id column; persons are reconciled with it
+# in qc.csv (subjects without a person, persons not listed, persons without an ID).
+# --source-release-date and --source-reference fill cdm_source (default: today, empty).
+# --rejected-files: FHIR files the sidecar lists but intake rejected (e.g. checksum); a QC fail.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 fhir_dir= out_dir= vocab_dir= sql_dir=$here/../sql
 threads=${DUCKDB_THREADS:-2} memory=${DUCKDB_MEMORY:-4GB} format=parquet
 db= source_name="RDDC FHIR" strict=0 max_object_mb=128
+subjects= subject_id=id identifier_system= source_abbr= source_release_date= source_reference=
+rejected_files=0
 
 while (($#)); do
   case $1 in
@@ -29,20 +42,32 @@ while (($#)); do
     --source-name) source_name=$2; shift ;;
     --max-object-mb) max_object_mb=$2; shift ;;   # largest single JSON object (Bundle)
     --strict) strict=1 ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    --subjects) subjects=$2; shift ;;
+    --subject-id) subject_id=$2; shift ;;
+    --identifier-system) identifier_system=$2; shift ;;
+    --source-abbr) source_abbr=$2; shift ;;
+    --source-release-date) source_release_date=$2; shift ;;
+    --source-reference) source_reference=$2; shift ;;
+    --rejected-files) rejected_files=$2; shift ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
 done
 [[ -n $fhir_dir && -n $out_dir ]] || { echo "--fhir-dir and --out-dir are required" >&2; exit 2; }
 [[ $format == parquet || $format == csv ]] || { echo "--format must be parquet or csv" >&2; exit 2; }
+[[ $rejected_files =~ ^[0-9]+$ ]] || { echo "--rejected-files must be a number" >&2; exit 2; }
+[[ $subject_id == id || $subject_id == identifier ]] || { echo "--subject-id must be id or identifier" >&2; exit 2; }
+[[ $subject_id == id || -n $identifier_system ]] || { echo "--subject-id identifier needs --identifier-system" >&2; exit 2; }
+[[ -z $subjects || -f $subjects ]] || { echo "--subjects $subjects not found" >&2; exit 2; }
 command -v duckdb >/dev/null || { echo "duckdb CLI not found on PATH" >&2; exit 2; }
 
 fhir_dir=$(cd "$fhir_dir" && pwd)
-shopt -s nullglob
-inputs=("$fhir_dir"/*.ndjson "$fhir_dir"/*.ndjson.gz "$fhir_dir"/*.json "$fhir_dir"/*.json.gz)
-inputs=("${inputs[@]##*/export_status.json}")   # bulk export manifest, not a resource
-mapfile -t inputs < <(printf '%s\n' "${inputs[@]}" | grep -v '^$' || true)
+# Anywhere under the directory (staged sidecar files sit in subdirectories), following
+# links (Nextflow stages inputs as symlinks). export_status.json is the bulk export
+# manifest, not a resource.
+mapfile -t inputs < <(find -L "$fhir_dir" -type f \( -name '*.ndjson' -o -name '*.ndjson.gz' \
+                        -o -name '*.json' -o -name '*.json.gz' \) ! -name 'export_status.json' | sort)
 ((${#inputs[@]})) || { echo "no *.ndjson / *.json files in $fhir_dir" >&2; exit 1; }
 if [[ -n $vocab_dir ]]; then
   vocab_dir=$(cd "$vocab_dir" && pwd)
@@ -77,12 +102,19 @@ copy_opts=$([[ $format == parquet ]] && echo "FORMAT parquet, COMPRESSION zstd" 
   echo "SET VARIABLE fhir_glob = $file_list;"
   echo "SET VARIABLE vocab_dir = $(sq "${vocab_dir:-}");"
   echo "SET VARIABLE source_name = $(sq "$source_name");"
-  echo "SET VARIABLE source_abbr = $(sq "${source_name// /_}");"
+  echo "SET VARIABLE source_abbr = $(sq "${source_abbr:-${source_name// /_}}");"
+  echo "SET VARIABLE source_release_date = $(sq "$source_release_date");"
+  echo "SET VARIABLE source_reference = $(sq "$source_reference");"
+  echo "SET VARIABLE subject_id_mode = $(sq "$subject_id");"
+  echo "SET VARIABLE rejected_files = $rejected_files;"
+  echo "SET VARIABLE identifier_system = $(sq "$identifier_system");"
+  echo "SET VARIABLE subjects_file = $(sq "${subjects:+$(cd "$(dirname "$subjects")" && pwd)/$(basename "$subjects")}");"
   echo "SET VARIABLE cdm_holder = $(sq "${CDM_HOLDER:-Sage Bionetworks}");"
   stages=(01_load_fhir.sql "$([[ -n $vocab_dir ]] && echo 02_vocab_athena.sql || echo 02_vocab_empty.sql)"
           "$([[ -n $vocab_dir && -f $vocab_dir/CONCEPT_ANCESTOR.csv ]] && echo 02_ancestor_athena.sql || echo 02_ancestor_empty.sql)"
           03_constants.sql 10_cdm_ddl.sql 20_person.sql 30_visit.sql 40_events.sql
-          50_domains.sql 55_eras.sql 60_period_and_source.sql 90_qc.sql)
+          50_domains.sql 55_eras.sql 60_period_and_source.sql 90_qc.sql
+          "$([[ -n $subjects ]] && echo 91_subjects.sql || echo 91_subjects_none.sql)" 92_intake.sql)
   for s in "${stages[@]}"; do
     echo ".print '== $s'"
     cat "$sql_dir/$s"

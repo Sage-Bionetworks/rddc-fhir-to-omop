@@ -1,8 +1,9 @@
 # rddc-fhir-to-omop
 
-Prototype: convert FHIR R4 to the OMOP CDM 5.4 on a single node. A single Nextflow process
-runs one DuckDB job over a directory of FHIR resources and writes OMOP tables as Parquet
-(or CSV), plus a QC report.
+Prototype: convert FHIR R4 to the OMOP CDM 5.4 on a single node. The input is a deposited
+batch described by its Croissant sidecar (`_sidecar.json`, [rddc-model](https://github.com/Sage-Bionetworks/rddc-model)).
+A single Nextflow process runs one DuckDB job over the batch's FHIR files and writes OMOP
+tables as Parquet (or CSV), plus a QC report.
 
 Status: prototype. It's tested against Synthea output only. See [Limitations](#limitations).
 
@@ -11,15 +12,17 @@ Status: prototype. It's tested against Synthea output only. See [Limitations](#l
 ```bash
 make tools          # fetch the DuckDB CLI and Nextflow into .tools/ (gitignored)
 make test           # ETL checks on tests/data (DuckDB only, ~2 s)
-make nf-test        # the same fixture through Nextflow, no container
+make nf-test        # the same fixture through Nextflow, no container (tests/data/batch/_sidecar.json)
+make nf-test-errors # intake rejection: a wrong checksum is reported as a QC failure
 make nf-test-docker # ...in the Docker image (builds rddc-fhir-to-omop:dev)
 ```
 
 Real run:
 
 ```bash
+make sidecar BATCH=/path/to/batch          # once: write the batch's _sidecar.json (rddc-sidecar)
 .tools/nextflow run . -profile docker \
-    --input /path/to/fhir_ndjson \
+    --sidecar /path/to/batch/_sidecar.json \
     --vocab_dir /path/to/athena_vocab \
     --outdir results
 ```
@@ -35,17 +38,40 @@ PATH=.tools:$PATH bin/fhir_to_omop.sh --fhir-dir DIR --out-dir OUT [--vocab-dir 
 
 | Param | Default | |
 |---|---|---|
-| `--input` | required | Directory of FHIR resources: bulk-export NDJSON (`*.ndjson`, `*.ndjson.gz`) or Bundle JSON (`*.json`) |
+| `--sidecar` | required | The batch's `_sidecar.json` (local path or `s3://`). Its FHIR files are converted; see [Input](#input-the-batch-sidecar) |
 | `--outdir` | required | |
 | `--vocab_dir` | none | Athena download containing `CONCEPT.csv`, `CONCEPT_RELATIONSHIP.csv` and `VOCABULARY.csv`. Without it, clinical `concept_id`s are 0 and source codes are kept |
 | `--output_format` | `parquet` | `parquet` or `csv` |
-| `--source_name` | `RDDC FHIR` | `cdm_source.cdm_source_name` |
+| `--source_name` | the sidecar's `name` | `cdm_source.cdm_source_name` |
 | `--strict_qc` | `false` | Fail the run if any QC check has status `fail` |
 | `--max_object_mb` | `128` | Largest single JSON object, e.g. one patient Bundle |
 
 The process uses the `process_medium` label (6 CPUs, 36 GB). It passes `task.cpus` and 80% of
 `task.memory` to DuckDB as `threads` and `memory_limit`. DuckDB spills to the work directory
 when it runs past the memory limit, so less memory makes the run slower but it still finishes.
+
+## Input: the batch sidecar
+
+The pipeline finds its files from the sidecar, as the other RDDC pipelines do
+(rddc-genomics-workflows' `report-findings`); `subworkflows/local/sidecar_intake` is a
+vendored copy of the shared intake there.
+
+- **Files.** Each `contentUrl` is resolved against the sidecar's location and staged; md5 (and
+  sha256 if given) are checked. `FhirNdjsonFile`, `FhirBundleFile` and `FhirResourceFile` are
+  converted; other classes are skipped. A file that fails intake (checksum mismatch, a path
+  outside the batch) is not converted and counts as an `intake_rejected_files` QC failure,
+  since the OMOP output would be incomplete. `intake/intake.tsv` lists every entry with its
+  route and reason.
+- **Subjects.** The sidecar's subjects with a FHIR ID system set `person_source_value`:
+  `fhir_patient_id` → `Patient.id`; `fhir_patient_identifier` → the `Patient.identifier`
+  value of its `identifierSystemUri`. QC then checks that persons and listed subjects match
+  one to one. One FHIR ID system per batch.
+- **cdm_source.** `cdm_source_name` = the sidecar's `name` (`<sourceId>/<batchId>`),
+  `cdm_source_abbreviation` = `sourceId`, `source_release_date` = the `exportTime` of the
+  `FhirBulkExport` the files belong to, `source_documentation_reference` = the sidecar's `@id`.
+
+`bin/fhir_to_omop.sh` still runs on a plain directory (`--fhir-dir`, searched recursively);
+the sidecar values are options there (`--subjects`, `--subject-id`, `--source-*`).
 
 ## Outputs
 
@@ -54,6 +80,8 @@ when it runs past the memory limit, so less memory makes the run slower but it s
   omop/<table>.parquet     16 CDM 5.4 tables in official column order (list below)
   source_id_map.parquet    resource_type, fhir_id -> omop_id (provenance back to FHIR)
   qc.csv                   check_name, table_name, value, status (ok|warn|fail), detail
+  intake/intake.tsv        every sidecar entry: class, resource type, route (convert|skipped|rejected|file_set), reason
+  intake/batch.json        the batch header (source, batch, contributor, sensitivity)
   pipeline_info/software_versions.yml
 ```
 
@@ -78,6 +106,8 @@ session:
 | `55_eras.sql` | condition_era and drug_era, using the OHDSI rules: same-concept records 30 days apart or less merge into one era. drug_era rolls exposures up to their ingredient (needs `CONCEPT_ANCESTOR.csv`), and `gap_days` is the uncovered days inside the era |
 | `60_period_and_source.sql` | observation_period (span of each person's activity), cdm_source |
 | `90_qc.sql` | QC checks (listed below) |
+| `91_subjects.sql` / `91_subjects_none.sql` | Reconcile persons with the sidecar's subjects; without a subject list, a `warn` |
+| `92_intake.sql` | FHIR files rejected at intake (`fail` if any) |
 
 **Domain routing.** Each FHIR resource type has a default domain, listed below. When a
 vocabulary is loaded, the domain of the standard concept takes precedence, which is the
@@ -112,6 +142,9 @@ Timestamps keep the local wall-clock time and drop the UTC offset, so `*_date` a
 - persons with no observation period
 - source values longer than 50 characters
 - row counts
+- sidecar subjects with no person, persons the sidecar does not list, and persons without a
+  subject ID (`fail`)
+- FHIR files the sidecar lists that intake rejected (`fail`)
 
 ## Data quality (OHDSI DQD)
 
@@ -164,7 +197,9 @@ Fixed after the first run with the full vocabulary:
 
 ## Test data
 
-- `tests/data/fhir/`: 8 Synthea patients (`-p 6 -s 7`, including deceased), bulk NDJSON,
+- `tests/data/batch/_sidecar.json`: the batch's sidecar, written by rddc-sidecar
+  (`make test-sidecar`); `_sidecar.errors.json` is a copy with one wrong checksum.
+- `tests/data/batch/fhir/`: 8 Synthea patients (`-p 6 -s 7`, including deceased), bulk NDJSON,
   gzipped. Claims and other billing resources are dropped to keep it small. CarePlan is kept
   as an example of an unmapped type.
 - `tests/data/vocab_mini/`: a hand-made Athena-format vocabulary for testing domain routing,

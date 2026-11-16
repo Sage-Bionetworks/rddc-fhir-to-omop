@@ -16,7 +16,10 @@ GROUP BY person_id;
 INSERT INTO cdm_source
 SELECT getvariable('source_name'), left(getvariable('source_abbr'), 25), getvariable('cdm_holder'),
        'FHIR R4 converted to OMOP CDM 5.4 by rddc-fhir-to-omop (DuckDB)',
-       NULL, 'rddc-fhir-to-omop', current_date, current_date, 'v5.4',
+       nullif(getvariable('source_reference'), ''),            -- the batch's sidecar
+       'rddc-fhir-to-omop',
+       coalesce(TRY_CAST(nullif(getvariable('source_release_date'), '') AS DATE), current_date),
+       current_date, 'v5.4',
        const('cdm_version', '5.4'),
        coalesce((SELECT vocabulary_version FROM stg.vocabulary WHERE vocabulary_id = 'None'),
                 'none');

@@ -3,9 +3,11 @@ process FHIR_TO_OMOP {
     publishDir "${params.outdir}", mode: 'copy', pattern: '{omop,qc.csv,source_id_map.*}'
 
     input:
-    path fhir,  stageAs: 'fhir'
-    path vocab, stageAs: 'vocab/*'
-    path sql,   stageAs: 'sql'
+    path fhir,     stageAs: 'fhir/??/*'   // the sidecar's FHIR files, one subfolder each (names may repeat)
+    path vocab,    stageAs: 'vocab/*'
+    path sql,      stageAs: 'sql'
+    path subjects                         // subjects.csv from the sidecar, or NO_SUBJECTS
+    val  source                           // cdm_source and subject ID settings (main.nf)
 
     output:
     path 'omop',            emit: omop
@@ -15,12 +17,14 @@ process FHIR_TO_OMOP {
 
     script:
     def vocab_arg = vocab.name == 'NO_VOCAB' ? '' : "--vocab-dir ${vocab}"
-    def strict    = params.strict_qc ? '--strict' : ''
+    def strict    = params.strict_qc.toString() == 'true' ? '--strict' : ''   // CLI gives "false" as a string
+    def subj_arg  = subjects.name == 'NO_SUBJECTS' ? '' : "--subjects ${subjects}"
+    def ident_arg = source.subject_id == 'identifier' ? "--identifier-system '${source.identifier_system}'" : ''
     // Leave ~20% of the task's memory for DuckDB's own overhead outside memory_limit.
     def mem_gb    = Math.max(1, (task.memory.toGiga() * 0.8) as int)
     """
     fhir_to_omop.sh \\
-        --fhir-dir ${fhir} \\
+        --fhir-dir fhir \\
         --out-dir . \\
         --sql-dir ${sql} \\
         ${vocab_arg} \\
@@ -28,7 +32,12 @@ process FHIR_TO_OMOP {
         --memory ${mem_gb}GB \\
         --format ${params.output_format} \\
         --max-object-mb ${params.max_object_mb} \\
-        --source-name '${params.source_name}' \\
+        --source-name '${source.name}' \\
+        --source-abbr '${source.abbr}' \\
+        --source-release-date '${source.release_date}' \\
+        --source-reference '${source.reference}' \\
+        --subject-id ${source.subject_id} ${ident_arg} ${subj_arg} \\
+        --rejected-files ${source.rejected_files} \\
         ${strict}
 
     cat <<-END_VERSIONS > versions.yml
