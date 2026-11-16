@@ -2,18 +2,79 @@
 -- when a vocabulary is loaded, QC fails any that are missing, non-standard or deprecated
 -- (check: constant_concept_invalid).
 
--- FHIR code system URI -> OMOP vocabulary_id.
-CREATE OR REPLACE TABLE stg.system_vocab (system VARCHAR, vocabulary_id VARCHAR);
+-- FHIR code system URI -> OMOP vocabulary_id: the defaults for every source. A source
+-- config (--source-config, sql/04_source_*.sql) adds to these or replaces them per system.
+-- `match` says how a FHIR code is compared with Athena's concept_code (macro code_norm):
+--   exact             as written
+--   nodot             ignoring dots: sources often send ICD codes as "E119" for "E11.9"
+--   curie_underscore  ":" and "_" are the same: FHIR "HP:0000118", Athena "HP_0000118"
+--   strip_prefix      only the part after the last ":": FHIR "ORPHA:558", Athena "558"
+CREATE OR REPLACE TABLE stg.system_vocab (system VARCHAR, vocabulary_id VARCHAR, match VARCHAR);
 INSERT INTO stg.system_vocab VALUES
-    ('http://snomed.info/sct',                     'SNOMED'),
-    ('http://loinc.org',                           'LOINC'),
-    ('http://www.nlm.nih.gov/research/umls/rxnorm', 'RxNorm'),
-    ('http://hl7.org/fhir/sid/cvx',                'CVX'),
-    ('http://hl7.org/fhir/sid/ndc',                'NDC'),
-    ('http://hl7.org/fhir/sid/icd-10-cm',          'ICD10CM'),
-    ('http://hl7.org/fhir/sid/icd-9-cm',           'ICD9CM'),
-    ('http://www.ama-assn.org/go/cpt',             'CPT4'),
-    ('http://unitsofmeasure.org',                  'UCUM');
+    ('http://snomed.info/sct',                      'SNOMED',    'exact'),
+    ('http://loinc.org',                            'LOINC',     'exact'),
+    ('http://www.nlm.nih.gov/research/umls/rxnorm', 'RxNorm',    'exact'),
+    ('http://hl7.org/fhir/sid/cvx',                 'CVX',       'exact'),
+    ('http://hl7.org/fhir/sid/ndc',                 'NDC',       'exact'),
+    ('http://hl7.org/fhir/sid/icd-10-cm',           'ICD10CM',   'exact'),
+    ('http://hl7.org/fhir/sid/icd-10',              'ICD10',     'exact'),
+    ('http://hl7.org/fhir/sid/icd-9-cm',            'ICD9CM',    'exact'),
+    ('http://www.cms.gov/Medicare/Coding/ICD10',    'ICD10PCS',  'exact'),
+    ('http://www.ama-assn.org/go/cpt',              'CPT4',      'exact'),
+    ('http://www.cms.gov/Medicare/Coding/HCPCSReleaseCodeSets', 'HCPCS', 'exact'),
+    ('http://unitsofmeasure.org',                   'UCUM',      'exact'),
+    -- rare-disease terminologies (non-standard in OMOP; the source concept is kept, and
+    -- the standard concept where Athena has a 'Maps to')
+    ('http://purl.obolibrary.org/obo/hp.owl',       'HPO',       'curie_underscore'),
+    ('http://human-phenotype-ontology.org',         'HPO',       'curie_underscore'),
+    ('http://purl.obolibrary.org/obo/mondo.owl',    'Mondo',     'curie_underscore'),
+    ('http://www.orpha.net',                        'ORPHAcode', 'strip_prefix'),
+    -- the same code systems written as OIDs, as C-CDA-derived FHIR often does
+    ('urn:oid:2.16.840.1.113883.6.96',              'SNOMED',    'exact'),
+    ('urn:oid:2.16.840.1.113883.6.1',               'LOINC',     'exact'),
+    ('urn:oid:2.16.840.1.113883.6.88',              'RxNorm',    'exact'),
+    ('urn:oid:2.16.840.1.113883.12.292',            'CVX',       'exact'),
+    ('urn:oid:2.16.840.1.113883.6.69',              'NDC',       'exact'),
+    ('urn:oid:2.16.840.1.113883.6.90',              'ICD10CM',   'exact'),
+    ('urn:oid:2.16.840.1.113883.6.103',             'ICD9CM',    'exact'),
+    ('urn:oid:2.16.840.1.113883.6.4',               'ICD10PCS',  'exact'),
+    ('urn:oid:2.16.840.1.113883.6.12',              'CPT4',      'exact'),
+    ('urn:oid:2.16.840.1.113883.6.285',             'HCPCS',     'exact'),
+    ('urn:oid:2.16.840.1.113883.6.8',               'UCUM',      'exact');
+
+CREATE OR REPLACE MACRO code_norm(match, code) AS CASE match
+    WHEN 'nodot' THEN replace(code, '.', '')
+    WHEN 'curie_underscore' THEN replace(code, ':', '_')
+    WHEN 'strip_prefix' THEN split_part(code, ':', -1)
+    ELSE code END;
+
+-- Source config (empty unless --source-config gives the files; see sql/04_source_*.sql).
+--   source_system    the source's own code system URIs, same columns as stg.system_vocab
+--   source_code_map  single codes of a local code system -> the Athena (vocabulary, code)
+--                    that means the same
+CREATE OR REPLACE TABLE stg.source_system (system VARCHAR, vocabulary_id VARCHAR, match VARCHAR);
+CREATE OR REPLACE TABLE stg.source_code_map (system VARCHAR, code VARCHAR, vocabulary_id VARCHAR,
+                                             concept_code VARCHAR);
+
+-- Records that did not happen or were entered by mistake are not loaded (QC counts them).
+-- `field` is the FHIR element: status, or verificationStatus (its first coding's code).
+CREATE OR REPLACE TABLE stg.status_exclude (src_type VARCHAR, field VARCHAR, code VARCHAR);
+INSERT INTO stg.status_exclude VALUES
+    ('Encounter', 'status', 'entered-in-error'), ('Encounter', 'status', 'cancelled'),
+    ('Encounter', 'status', 'planned'),
+    ('Condition', 'verificationStatus', 'entered-in-error'),
+    ('Condition', 'verificationStatus', 'refuted'),
+    ('AllergyIntolerance', 'verificationStatus', 'entered-in-error'),
+    ('AllergyIntolerance', 'verificationStatus', 'refuted'),
+    ('Procedure', 'status', 'entered-in-error'), ('Procedure', 'status', 'not-done'),
+    ('Procedure', 'status', 'preparation'),
+    ('Observation', 'status', 'entered-in-error'), ('Observation', 'status', 'cancelled'),
+    ('MedicationRequest', 'status', 'entered-in-error'),
+    ('MedicationRequest', 'status', 'cancelled'), ('MedicationRequest', 'status', 'draft'),
+    ('MedicationAdministration', 'status', 'entered-in-error'),
+    ('MedicationAdministration', 'status', 'not-done'),
+    ('Immunization', 'status', 'entered-in-error'), ('Immunization', 'status', 'not-done'),
+    ('Device', 'status', 'entered-in-error');
 
 -- UCUM codes as FHIR/Synthea write them -> the concept_code Athena uses for the same unit.
 -- Athena's UCUM vocabulary uses its own spellings for some units, so an exact-code lookup

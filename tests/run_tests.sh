@@ -53,7 +53,7 @@ qc "$o" "QC: CarePlan reported as not mapped" \
 echo "== mini vocabulary"
 o=$work/vocab
 "$root/bin/fhir_to_omop.sh" --fhir-dir "$root/tests/data/batch/fhir" --out-dir "$o" \
-  --vocab-dir "$root/tests/data/vocab_mini" --format csv --strict >"$work/vocab.log" 2>&1 \
+  --vocab-dir "$root/tests/data/vocab_mini" --format csv --strict --max-unmapped-pct 100 >"$work/vocab.log" 2>&1 \
   || { cat "$work/vocab.log"; exit 1; }
 check "$o" "standard condition mapped" \
   "SELECT count(*) > 0 FROM 'condition_occurrence.csv' WHERE condition_source_value = '444814009' AND condition_concept_id = 2000000001"
@@ -203,6 +203,84 @@ o=$work/subjects_dl
 n_dl=$(wc -l < "$work/subjects_dl.csv"); n_dl=$((n_dl - 1))
 qc "$o" "persons without the declared identifier fail ($((n_patients - n_dl)) of $n_patients)" \
   "any_value(status || value) FILTER (WHERE check_name = 'persons_without_subject_id') = 'fail$((n_patients - n_dl)).0'"
+
+echo "== non-Synthea shapes (tests/data/edge) with its source config"
+edge=$root/tests/data/edge
+o=$work/edge
+"$root/bin/fhir_to_omop.sh" --fhir-dir "$edge/fhir" --out-dir "$o" --vocab-dir "$root/tests/data/vocab_mini" \
+  --source-config "$edge/source_config" --strict --max-unmapped-pct 100 >"$work/edge.log" 2>&1 \
+  || { cat "$work/edge.log"; exit 1; }
+check "$o" "year-only birthDate keeps the person (year set, month and datetime NULL)" \
+  "SELECT count(*) = 2 AND bool_or(year_of_birth = 1980 AND month_of_birth IS NULL AND birth_datetime IS NULL)
+          AND bool_or(year_of_birth = 1975 AND month_of_birth = 6 AND day_of_birth = 15) FROM 'person.parquet'"
+check "$o" "deceasedBoolean without a date gives no death row, and QC says so" \
+  "SELECT (SELECT count(*) FROM 'death.parquet') = 0
+      AND (SELECT count(*) FROM '$o/qc.csv' WHERE check_name = 'deceased_without_date' AND value = 1) = 1"
+check "$o" "cancelled encounter is not a visit; versioned subject reference resolves" \
+  "SELECT count(*) = 1 AND bool_and(person_id IS NOT NULL) FROM 'visit_occurrence.parquet'"
+check "$o" "Condition with no date takes its encounter's start" \
+  "SELECT count(*) = 1 FROM 'condition_occurrence.parquet' c JOIN 'visit_occurrence.parquet' v USING (visit_occurrence_id)
+    WHERE c.condition_start_date = DATE '2020-03-01' AND c.condition_start_datetime = v.visit_start_datetime"
+check "$o" "the coding that maps is used, not the first one" \
+  "SELECT count(*) = 1 FROM 'condition_occurrence.parquet'
+    WHERE condition_source_value = '444814009' AND condition_concept_id = 2000000001 AND condition_start_date = DATE '2020-03-01'"
+check "$o" "entered-in-error Condition and cancelled MedicationRequest are not loaded" \
+  "SELECT (SELECT count(*) FROM 'condition_occurrence.parquet') = 3 AND (SELECT count(*) FROM 'drug_exposure.parquet') = 3
+      AND (SELECT sum(value) FROM '$o/qc.csv' WHERE check_name = 'events_excluded_status') = 2"
+check "$o" "source config: local ICD-10-CM URI without dots maps (J0190 -> J01.90 -> standard)" \
+  "SELECT count(*) = 1 FROM 'condition_occurrence.parquet'
+    WHERE condition_source_value = 'J0190' AND condition_source_concept_id = 2000000060 AND condition_concept_id = 2000000001"
+check "$o" "partial onset dates: 2019 -> 2019-01-01, 2019-05 -> 2019-05-01" \
+  "SELECT bool_or(condition_start_date = DATE '2019-01-01') AND bool_or(condition_start_date = DATE '2019-05-01')
+          AND (SELECT sum(value) FROM '$o/qc.csv' WHERE check_name = 'events_partial_date') = 2
+     FROM 'condition_occurrence.parquet'"
+check "$o" "HPO code (HP:0000118) keeps its source concept" \
+  "SELECT count(*) = 1 FROM 'condition_occurrence.parquet'
+    WHERE condition_source_value = 'HP:0000118' AND condition_source_concept_id = 2000000061 AND condition_concept_id = 0"
+check "$o" "contained Medication gives the drug code" \
+  "SELECT count(*) = 1 FROM 'drug_exposure.parquet'
+    WHERE drug_exposure_start_date = DATE '2020-03-01' AND drug_concept_id = 2000000030"
+check "$o" "Medication without a code: one exposure per ingredient" \
+  "SELECT count(*) = 2 AND count(DISTINCT drug_concept_id) = 2 AND bool_and(drug_concept_id IN (2000000030, 2000000041))
+     FROM 'drug_exposure.parquet' WHERE drug_exposure_start_date = DATE '2019-05-02'"
+check "$o" "source config: local unit code maps (bpm -> /min)" \
+  "SELECT count(*) = 1 FROM 'measurement.parquet' WHERE unit_source_value = 'bpm' AND unit_concept_id = 2000000021"
+check "$o" "unit given as text only is looked up as UCUM (kg)" \
+  "SELECT count(*) = 1 FROM 'measurement.parquet' WHERE unit_source_value = 'kg' AND unit_concept_id = 2000000020"
+qc "$o" "QC: unrecognised code system reported" \
+  "count(*) FILTER (WHERE check_name = 'code_system_unrecognised' AND table_name = 'urn:local:obs' AND value = 1) = 1"
+qc "$o" "QC: source config recorded, no invalid entries" \
+  "count(*) FILTER (WHERE check_name = 'source_config' AND value = 2 AND detail LIKE 'source_config:%') = 1
+   AND count(*) FILTER (WHERE check_name = 'source_config_invalid') = 0"
+
+echo "== QC limits"
+o=$work/edge_limit
+"$root/bin/fhir_to_omop.sh" --fhir-dir "$edge/fhir" --out-dir "$o" --vocab-dir "$root/tests/data/vocab_mini" \
+  --source-config "$edge/source_config" >"$work/edge_limit.log" 2>&1 || { cat "$work/edge_limit.log"; exit 1; }
+qc "$o" "unmapped concepts above the default limit (25%) fail" \
+  "count(*) FILTER (WHERE check_name = 'concept_unmapped_pct' AND status = 'fail') >= 1"
+mkdir -p "$work/edge_nodate"
+sed 's#"encounter":{"reference":"Encounter/E1"},"code":{"coding":\[{"system":"urn:local:dx"#"code":{"coding":[{"system":"urn:local:dx"#' \
+  "$edge/fhir/edge.ndjson" > "$work/edge_nodate/edge.ndjson"
+o=$work/edge_unplaced
+"$root/bin/fhir_to_omop.sh" --fhir-dir "$work/edge_nodate" --out-dir "$o" --strict >"$work/edge_unplaced.log" 2>&1 \
+  && unplaced_rc=0 || unplaced_rc=$?
+qc "$o" "records that cannot be loaded above the limit (5%) fail: 1 of 3 Conditions" \
+  "any_value(status || value) FILTER (WHERE check_name = 'events_unplaced_pct' AND table_name = 'Condition') = 'fail33.3'"
+if [[ $unplaced_rc == 3 ]]; then echo "  ok    --strict exits 3 when records cannot be loaded"
+else echo "  FAIL  --strict with unloadable records exited $unplaced_rc, want 3"; fails=$((fails + 1)); fi
+"$root/bin/fhir_to_omop.sh" --fhir-dir "$work/edge_nodate" --out-dir "$work/edge_unplaced_ok" --strict \
+  --max-unplaced-pct 50 >/dev/null 2>&1 && rc=0 || rc=$?
+if [[ $rc == 0 ]]; then echo "  ok    --max-unplaced-pct raises the limit"
+else echo "  FAIL  --max-unplaced-pct 50 exited $rc, want 0"; fails=$((fails + 1)); fi
+mkdir -p "$work/bad_config"
+printf 'system,vocabulary_id,match\nurn:local:icd10,NOPE,nodot\n' > "$work/bad_config/systems.csv"
+printf 'system,code,vocabulary_id,concept_code\nurn:local:units,bpm,UCUM,no-such-unit\n' > "$work/bad_config/concept_map.csv"
+o=$work/edge_badcfg
+"$root/bin/fhir_to_omop.sh" --fhir-dir "$edge/fhir" --out-dir "$o" --vocab-dir "$root/tests/data/vocab_mini" \
+  --source-config "$work/bad_config" >"$work/edge_badcfg.log" 2>&1 || { cat "$work/edge_badcfg.log"; exit 1; }
+qc "$o" "source config entries the vocabulary cannot resolve fail (systems.csv and concept_map.csv)" \
+  "count(*) FILTER (WHERE check_name = 'source_config_invalid' AND status = 'fail') = 2"
 
 echo
 if ((fails)); then echo "$fails check(s) failed"; exit 1; fi

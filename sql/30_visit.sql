@@ -1,4 +1,5 @@
--- Stage: Encounter -> visit_occurrence.
+-- Stage: Encounter -> visit_occurrence. Cancelled, planned and entered-in-error encounters
+-- are not visits (stg.status_exclude).
 -- provider/care_site come from the first participant and serviceProvider, which Synthea
 -- writes as conditional references (resolved through stg.identifier_ref).
 INSERT INTO visit_occurrence
@@ -21,6 +22,8 @@ FROM (
            res->'participant'->0->'individual'->>'reference' AS practitioner_ref,
            res->'serviceProvider'->>'reference' AS org_ref
     FROM stg.fhir WHERE resource_type = 'Encounter'
+      AND coalesce(res->>'status', '') NOT IN (SELECT code FROM stg.status_exclude
+                                               WHERE src_type = 'Encounter' AND field = 'status')
 ) e
 JOIN stg.id_map m ON m.resource_type = 'Encounter' AND m.fhir_id = e.id
 JOIN stg.id_map pm ON pm.resource_type = 'Patient' AND pm.fhir_id = e.patient_id

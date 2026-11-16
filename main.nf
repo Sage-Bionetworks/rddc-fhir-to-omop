@@ -8,6 +8,8 @@
  *   anything else                                     -> skipped, with a reason
  * The sidecar also gives the subjects (person_source_value follows their idSystem, and QC
  * reconciles persons with them) and cdm_source defaults (source, batch, export time).
+ * The sidecar's sourceId also selects the source's mapping config, if there is one
+ * (assets/sources/<sourceId>/: its own code system URIs and local codes).
  * Optional: an Athena vocabulary download (CONCEPT.csv, CONCEPT_RELATIONSHIP.csv,
  * VOCABULARY.csv). Without it every clinical concept_id is 0 and source codes are kept.
  */
@@ -19,6 +21,10 @@ params.output_format = 'parquet'   // parquet | csv
 params.source_name   = null        // cdm_source.cdm_source_name (default: the sidecar's name)
 params.strict_qc     = false       // fail the run if any QC check has status 'fail'
 params.max_object_mb = 128         // largest single JSON object (e.g. one patient Bundle)
+params.source_config     = null    // the source's mapping config directory (default: by sourceId, below)
+params.source_config_dir = "${projectDir}/assets/sources"   // <sourceId>/ under here is used if it exists
+params.max_unplaced_pct  = 5       // QC fail: records of one resource type that could not be loaded
+params.max_unmapped_pct  = 25      // QC fail: rows of one domain with concept_id 0 (with a vocabulary)
 
 // After the params: an included module sees params as they are at include time.
 include { SIDECAR_INTAKE } from './subworkflows/local/sidecar_intake/main.nf'
@@ -43,6 +49,17 @@ def fhirSubjects(Map batch) {
         return [mode: 'identifier', system: uris[0], ids: subjects*.subjectId]
     }
     return [mode: 'id', system: '', ids: subjects*.subjectId]
+}
+
+// The source's mapping config: --source_config, else <source_config_dir>/<sourceId> if it exists.
+def sourceConfig(Map batch) {
+    if (params.source_config) return file(params.source_config, checkIfExists: true, type: 'dir')
+    def id = batch.sourceId as String
+    if (id ==~ /[A-Za-z0-9][A-Za-z0-9._-]*/) {
+        def dir = file("${params.source_config_dir}/${id}")
+        if (dir.isDirectory()) return dir
+    }
+    return file("${projectDir}/assets/NO_SOURCE_CONFIG", checkIfExists: true)
 }
 
 def intakeRow(Map meta, String route, String reason) {
@@ -109,7 +126,9 @@ workflow {
         : file("${projectDir}/assets/NO_VOCAB", checkIfExists: true))
     sql   = channel.value(file("${projectDir}/sql", checkIfExists: true, type: 'dir'))
 
-    FHIR_TO_OMOP(fhir, vocab, sql, subjects_csv, source)
+    source_config = batch.map { b -> sourceConfig(b) }.first()
+
+    FHIR_TO_OMOP(fhir, vocab, sql, subjects_csv, source, source_config)
 
     FHIR_TO_OMOP.out.versions
         .map { f -> f.text }

@@ -44,20 +44,32 @@ FROM (
 )
 ORDER BY ref, id;
 
--- FHIR id from a literal reference: "Patient/abc", "urn:uuid:abc", or an absolute URL.
--- Conditional references return NULL here; join stg.identifier_ref for those.
+-- FHIR id from a literal reference: "Patient/abc", "Patient/abc/_history/2", "urn:uuid:abc",
+-- or an absolute URL. Conditional references return NULL here (join stg.identifier_ref for
+-- those), and so do contained references ("#med1"; see contained_res).
 CREATE OR REPLACE MACRO ref_id(r) AS CASE
-    WHEN r IS NULL OR r LIKE '%?%' THEN NULL
+    WHEN r IS NULL OR r LIKE '%?%' OR r LIKE '#%' THEN NULL
     WHEN r LIKE 'urn:uuid:%' THEN substr(r, 10)
-    ELSE split_part(r, '/', -1)
+    ELSE split_part(regexp_replace(r, '/_history/[^/]+$', ''), '/', -1)
 END;
 
 CREATE OR REPLACE MACRO resolve_ref(r) AS
     coalesce(ref_id(r), (SELECT x.id FROM stg.identifier_ref x WHERE x.ref = r));
 
--- FHIR dateTime -> OMOP DATE / TIMESTAMP. Keeps the local wall-clock time and drops the
--- UTC offset, so the date and datetime columns always agree.
-CREATE OR REPLACE MACRO fhir_date(s) AS TRY_CAST(substr(s, 1, 10) AS DATE);
+-- The resource in `res.contained` that a "#id" reference points to (NULL for other references).
+CREATE OR REPLACE MACRO contained_res(res, r) AS
+    list_filter(json_extract(res, '$.contained[*]'), lambda c: '#' || (c->>'id') = r)[1];
+
+-- FHIR date/dateTime -> OMOP DATE / TIMESTAMP. Keeps the local wall-clock time and drops the
+-- UTC offset, so the date and datetime columns always agree. FHIR allows partial dates:
+-- "2019" becomes 2019-01-01 and "2019-03" becomes 2019-03-01 (QC counts them).
+CREATE OR REPLACE MACRO fhir_partial(s) AS
+    coalesce(regexp_full_match(s, '\d{4}(-\d{2})?'), false);
+CREATE OR REPLACE MACRO fhir_date(s) AS CASE
+    WHEN regexp_full_match(s, '\d{4}') THEN TRY_CAST(s || '-01-01' AS DATE)
+    WHEN regexp_full_match(s, '\d{4}-\d{2}') THEN TRY_CAST(s || '-01' AS DATE)
+    ELSE TRY_CAST(substr(s, 1, 10) AS DATE)
+END;
 CREATE OR REPLACE MACRO fhir_ts(s) AS
     CASE WHEN length(s) >= 19 THEN TRY_CAST(replace(substr(s, 1, 19), 'T', ' ') AS TIMESTAMP)
          ELSE TRY_CAST(fhir_date(s) AS TIMESTAMP) END;
