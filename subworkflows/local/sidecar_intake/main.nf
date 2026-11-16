@@ -1,5 +1,5 @@
 // Vendored from Sage-Bionetworks/rddc-genomics-workflows, subworkflows/local/sidecar_intake/main.nf
-// (branch report-findings-dev). Keep the two copies in sync until it moves to a shared repo.
+// (commit e066dac, branch report-findings-dev). Keep the two copies in sync until it moves to a shared repo.
 /*
  * SIDECAR_INTAKE: the files of a batch, described by its Croissant sidecar (rddc-model).
  *

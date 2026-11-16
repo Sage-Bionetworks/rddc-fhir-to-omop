@@ -1,5 +1,5 @@
 // Vendored from Sage-Bionetworks/rddc-genomics-workflows, modules/local/verify_checksum/main.nf
-// (branch report-findings-dev). Difference: uses this repo's image (process.container), not rddc-reports.
+// (commit e066dac, branch report-findings-dev). Difference: uses this repo's image (process.container), not rddc-reports.
 // Check a staged file against the md5 (required) and sha256 (optional) in its sidecar entry.
 // Prints "ok" or "mismatch:<algorithm>"; the caller routes mismatches to the exception list
 // instead of failing the run.
