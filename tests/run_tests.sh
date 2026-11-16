@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end tests for bin/fhir_to_omop.sh on tests/data/fhir, without and with the
+# End-to-end tests for bin/fhir_to_omop.sh on tests/data/batch/fhir, without and with the
 # mini vocabulary. Each check is a SQL query that must return true.
 # Usage: tests/run_tests.sh   (needs duckdb on PATH; `make tools` puts one in .tools/)
 set -euo pipefail
@@ -18,11 +18,11 @@ qc() {  # qc <out_dir> <description> <where clause on qc.csv returning boolean>
   check "$1" "$2" "SELECT $3 FROM '$1/qc.csv'"
 }
 
-n_patients=$(gzip -dc "$root/tests/data/fhir/Patient.ndjson.gz" | wc -l)
+n_patients=$(gzip -dc "$root/tests/data/batch/fhir/Patient.ndjson.gz" | wc -l)
 
 echo "== no vocabulary"
 o=$work/novocab
-"$root/bin/fhir_to_omop.sh" --fhir-dir "$root/tests/data/fhir" --out-dir "$o" --strict >"$work/novocab.log" 2>&1 \
+"$root/bin/fhir_to_omop.sh" --fhir-dir "$root/tests/data/batch/fhir" --out-dir "$o" --strict >"$work/novocab.log" 2>&1 \
   || { cat "$work/novocab.log"; exit 1; }
 check "$o" "one person per Patient ($n_patients)" "SELECT count(*) = $n_patients FROM 'person.parquet'"
 check "$o" "every person has an observation_period" \
@@ -52,7 +52,7 @@ qc "$o" "QC: CarePlan reported as not mapped" \
 
 echo "== mini vocabulary"
 o=$work/vocab
-"$root/bin/fhir_to_omop.sh" --fhir-dir "$root/tests/data/fhir" --out-dir "$o" \
+"$root/bin/fhir_to_omop.sh" --fhir-dir "$root/tests/data/batch/fhir" --out-dir "$o" \
   --vocab-dir "$root/tests/data/vocab_mini" --format csv --strict >"$work/vocab.log" 2>&1 \
   || { cat "$work/vocab.log"; exit 1; }
 check "$o" "standard condition mapped" \
@@ -144,13 +144,65 @@ o=$work/bundle
 mkdir -p "$work/bundles"
 duckdb -c "COPY (SELECT 'Bundle' AS resourceType, 'collection' AS type,
                         list({'resource': json}) AS entry
-                 FROM read_json_objects('$root/tests/data/fhir/*.ndjson.gz'))
+                 FROM read_json_objects('$root/tests/data/batch/fhir/*.ndjson.gz'))
            TO '$work/bundles/all.json' (FORMAT json)" >/dev/null
 "$root/bin/fhir_to_omop.sh" --fhir-dir "$work/bundles" --out-dir "$o" >"$work/bundle.log" 2>&1 \
   || { cat "$work/bundle.log"; exit 1; }
 check "$o" "Bundle input gives the same row counts as NDJSON" \
   "SELECT (SELECT count(*) FROM 'measurement.parquet') = (SELECT count(*) FROM '$work/novocab/omop/measurement.parquet')
       AND (SELECT count(*) FROM 'person.parquet') = $n_patients"
+
+echo "== subjects from the batch sidecar (tests/data/batch/_sidecar.json)"
+sidecar=$root/tests/data/batch/_sidecar.json
+duckdb -c "COPY (SELECT s.subjectId AS subject_id FROM (SELECT unnest(subjects) AS s FROM read_json('$sidecar'))
+                 WHERE s.idSystem = 'fhir_patient_id') TO '$work/subjects.csv' (HEADER)" >/dev/null
+o=$work/subjects
+"$root/bin/fhir_to_omop.sh" --fhir-dir "$root/tests/data/batch/fhir" --out-dir "$o" --subjects "$work/subjects.csv" \
+  --strict >"$work/subjects.log" 2>&1 || { cat "$work/subjects.log"; exit 1; }
+qc "$o" "sidecar lists every person and nothing else (strict run passed)" \
+  "bool_and(status = 'ok') FILTER (WHERE check_name IN ('sidecar_subjects_without_person', 'persons_not_in_sidecar',
+                                                       'persons_without_subject_id'))"
+qc "$o" "all $n_patients sidecar subjects counted" "any_value(value) FILTER (WHERE check_name = 'sidecar_subjects') = $n_patients"
+check "$o" "person_source_value is Patient.id (fhir_patient_id)" \
+  "SELECT bool_and(person_source_value IN (SELECT subject_id FROM '$work/subjects.csv')) FROM 'person.parquet'"
+
+{ head -n -1 "$work/subjects.csv"; echo "not-a-patient"; } > "$work/subjects_bad.csv"
+o=$work/subjects_bad
+"$root/bin/fhir_to_omop.sh" --fhir-dir "$root/tests/data/batch/fhir" --out-dir "$o" --subjects "$work/subjects_bad.csv" \
+  >"$work/subjects_bad.log" 2>&1 || { cat "$work/subjects_bad.log"; exit 1; }
+qc "$o" "an unlisted person and a listed non-patient both fail" \
+  "any_value(status || value) FILTER (WHERE check_name = 'persons_not_in_sidecar') = 'fail1.0'
+   AND any_value(status || value) FILTER (WHERE check_name = 'sidecar_subjects_without_person') = 'fail1.0'"
+"$root/bin/fhir_to_omop.sh" --fhir-dir "$root/tests/data/batch/fhir" --out-dir "$work/subjects_strict" \
+  --subjects "$work/subjects_bad.csv" --strict >/dev/null 2>&1 && strict_rc=0 || strict_rc=$?
+if [[ $strict_rc == 3 ]]; then echo "  ok    --strict exits 3 on a subject mismatch"
+else echo "  FAIL  --strict on a subject mismatch exited $strict_rc, want 3"; fails=$((fails + 1)); fi
+
+# identifier mode: person_source_value is a Patient.identifier of the declared system.
+subjects_for() {  # subjects_for <system> <csv>: that identifier's values from Patient.ndjson
+  duckdb -c "COPY (SELECT i->>'value' AS subject_id
+                   FROM (SELECT unnest(json_extract(json, '\$.identifier[*]')) AS i
+                         FROM read_json_objects('$root/tests/data/batch/fhir/Patient.ndjson.gz'))
+                   WHERE i->>'system' = '$1') TO '$2' (HEADER)" >/dev/null
+}
+ssn=http://hl7.org/fhir/sid/us-ssn                # every Synthea patient has one (synthetic)
+subjects_for "$ssn" "$work/subjects_ssn.csv"
+o=$work/subjects_ssn
+"$root/bin/fhir_to_omop.sh" --fhir-dir "$root/tests/data/batch/fhir" --out-dir "$o" --subjects "$work/subjects_ssn.csv" \
+  --subject-id identifier --identifier-system "$ssn" --strict >"$work/subjects_ssn.log" 2>&1 \
+  || { cat "$work/subjects_ssn.log"; exit 1; }
+check "$o" "identifier mode: person_source_value is the declared system's identifier" \
+  "SELECT bool_and(person_source_value IN (SELECT subject_id FROM '$work/subjects_ssn.csv'))
+          AND bool_and(person_source_value LIKE '999-%') AND count(*) = $n_patients FROM 'person.parquet'"
+
+dl=urn:oid:2.16.840.1.113883.4.3.25               # driver's licence: the children have none
+subjects_for "$dl" "$work/subjects_dl.csv"
+o=$work/subjects_dl
+"$root/bin/fhir_to_omop.sh" --fhir-dir "$root/tests/data/batch/fhir" --out-dir "$o" --subjects "$work/subjects_dl.csv" \
+  --subject-id identifier --identifier-system "$dl" >"$work/subjects_dl.log" 2>&1 || { cat "$work/subjects_dl.log"; exit 1; }
+n_dl=$(wc -l < "$work/subjects_dl.csv"); n_dl=$((n_dl - 1))
+qc "$o" "persons without the declared identifier fail ($((n_patients - n_dl)) of $n_patients)" \
+  "any_value(status || value) FILTER (WHERE check_name = 'persons_without_subject_id') = 'fail$((n_patients - n_dl)).0'"
 
 echo
 if ((fails)); then echo "$fails check(s) failed"; exit 1; fi
