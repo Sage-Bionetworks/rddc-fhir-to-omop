@@ -1,0 +1,53 @@
+{
+  "form": {
+    "title": "RDDC FHIR to OMOP",
+    "description": "FHIR R4 resources in a deposited batch to OMOP CDM 5.4 tables (Parquet or CSV), with a QC report. Source codes are mapped to OMOP concepts with an Athena vocabulary.",
+    "type": "object",
+    "properties": {
+      "vocab_dir": {
+        "type": "string",
+        "format": "directory-path",
+        "title": "OMOP vocabulary",
+        "description": "The folder of an RDDC OMOP vocabulary dataset that holds CONCEPT.csv, CONCEPT_RELATIONSHIP.csv and VOCABULARY.csv (the unzipped Athena download).",
+        "process": "rddc-omop-vocabulary"
+      },
+      "output_format": {
+        "type": "string",
+        "title": "Output format",
+        "description": "File format of the OMOP tables.",
+        "enum": ["parquet", "csv"],
+        "default": "parquet"
+      },
+      "source_name": {
+        "type": "string",
+        "title": "Source name",
+        "description": "cdm_source.cdm_source_name (optional; default: the name in the batch's sidecar)."
+      },
+      "strict_qc": {
+        "type": "boolean",
+        "title": "Fail on QC failures",
+        "description": "Fail the run if any QC check has status 'fail'.",
+        "default": false
+      },
+      "max_object_mb": {
+        "type": "integer",
+        "title": "Largest JSON object (MB)",
+        "description": "Size limit for a single JSON object, e.g. one patient Bundle. Raise it for very large Bundles.",
+        "default": 128,
+        "minimum": 1
+      }
+    },
+    "required": [
+      "vocab_dir"
+    ]
+  },
+  "ui": {
+    "ui:order": [
+      "vocab_dir",
+      "output_format",
+      "source_name",
+      "strict_qc",
+      "max_object_mb"
+    ]
+  }
+}

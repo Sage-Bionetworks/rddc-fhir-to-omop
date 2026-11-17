@@ -1,0 +1,8 @@
+{
+  "vocab_dir": "$.dataset.params.vocab_dir",
+  "output_format": "$.dataset.params.output_format",
+  "source_name": "$.dataset.params.source_name",
+  "strict_qc": "$.dataset.params.strict_qc",
+  "max_object_mb": "$.dataset.params.max_object_mb",
+  "outdir": "$.dataset.dataPath"
+}
