@@ -14,6 +14,9 @@ A hand-made, Athena-format (tab-delimited) vocabulary for tests. **Not real voca
   - source vs standard: CVX `140` is non-standard and maps to a TEST RxNorm concept;
   - one-to-many: SNOMED `180256009` maps to a procedure and a drug, giving one row in each;
   - invalid relationships (`invalid_reason = 'D'`) are ignored.
+- `2000000060` (ICD10CM `J01.90`, non-standard, maps to `2000000001`) and `2000000061` (HPO
+  `HP_0000118`, non-standard, no map) are for `../edge`: code systems from a source config,
+  and matching that ignores dots or treats `:` as `_`.
 - `CONCEPT_ANCESTOR.csv` rolls the TEST drugs up to TEST ingredients, for `drug_era`. It also
   has a self-row for a clinical drug (`2000000030`), which must be ignored because only
   ingredients count as roll-up targets.

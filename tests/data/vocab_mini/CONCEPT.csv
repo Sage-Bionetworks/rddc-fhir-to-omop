@@ -37,3 +37,5 @@ concept_id	concept_name	domain_id	vocabulary_id	concept_class_id	standard_concep
 722455	Telehealth	Visit	Visit	Visit	S	OMOP5556618	19700101	20991231	
 8645	unit per liter	Unit	UCUM	Unit	S	[U]/L	19700101	20991231	
 5083	Telehealth Provided Other than in Patient’s Home	Visit	CMS Place of Service	Visit		02	19700101	20991231	
+2000000060	Acute sinusitis, unspecified	Condition	ICD10CM	4-char billing code		J01.90	19700101	20991231	
+2000000061	Phenotypic abnormality	Condition	HPO	HPO		HP_0000118	19700101	20991231	

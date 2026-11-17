@@ -7,7 +7,8 @@
 #                   [--db FILE] [--source-name NAME] [--max-object-mb 128] [--strict]
 #                   [--subjects CSV] [--subject-id id|identifier] [--identifier-system URI]
 #                   [--source-abbr ABBR] [--source-release-date YYYY-MM-DD] [--source-reference REF]
-#                   [--rejected-files N]
+#                   [--rejected-files N] [--source-config DIR]
+#                   [--max-unplaced-pct 5] [--max-unmapped-pct 25]
 #
 # Writes <out-dir>/omop/<table>.{parquet,csv}, <out-dir>/source_id_map.<ext>,
 # <out-dir>/qc.csv. --db keeps the DuckDB database file (default: temporary).
@@ -20,6 +21,14 @@
 # in qc.csv (subjects without a person, persons not listed, persons without an ID).
 # --source-release-date and --source-reference fill cdm_source (default: today, empty).
 # --rejected-files: FHIR files the sidecar lists but intake rejected (e.g. checksum); a QC fail.
+#
+# --source-config DIR: the source's mapping config (assets/sources/<sourceId>/):
+#   systems.csv      the source's own code system URIs -> OMOP vocabulary
+#   concept_map.csv  single local codes -> the Athena (vocabulary, code) that means the same
+# QC limits (a check above its limit has status 'fail'):
+#   --max-unplaced-pct  records of one resource type that could not be loaded (default 5)
+#   --max-unmapped-pct  rows of one domain with concept_id 0, when a vocabulary is loaded
+#                       (default 25)
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -27,7 +36,7 @@ fhir_dir= out_dir= vocab_dir= sql_dir=$here/../sql
 threads=${DUCKDB_THREADS:-2} memory=${DUCKDB_MEMORY:-4GB} format=parquet
 db= source_name="RDDC FHIR" strict=0 max_object_mb=128
 subjects= subject_id=id identifier_system= source_abbr= source_release_date= source_reference=
-rejected_files=0
+rejected_files=0 source_config= max_unplaced_pct=5 max_unmapped_pct=25
 
 while (($#)); do
   case $1 in
@@ -49,7 +58,10 @@ while (($#)); do
     --source-release-date) source_release_date=$2; shift ;;
     --source-reference) source_reference=$2; shift ;;
     --rejected-files) rejected_files=$2; shift ;;
-    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    --source-config) source_config=$2; shift ;;
+    --max-unplaced-pct) max_unplaced_pct=$2; shift ;;
+    --max-unmapped-pct) max_unmapped_pct=$2; shift ;;
+    -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -57,6 +69,10 @@ done
 [[ -n $fhir_dir && -n $out_dir ]] || { echo "--fhir-dir and --out-dir are required" >&2; exit 2; }
 [[ $format == parquet || $format == csv ]] || { echo "--format must be parquet or csv" >&2; exit 2; }
 [[ $rejected_files =~ ^[0-9]+$ ]] || { echo "--rejected-files must be a number" >&2; exit 2; }
+for v in "$max_unplaced_pct" "$max_unmapped_pct"; do
+  [[ $v =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "--max-unplaced-pct / --max-unmapped-pct must be numbers" >&2; exit 2; }
+done
+[[ -z $source_config || -d $source_config ]] || { echo "--source-config $source_config is not a directory" >&2; exit 2; }
 [[ $subject_id == id || $subject_id == identifier ]] || { echo "--subject-id must be id or identifier" >&2; exit 2; }
 [[ $subject_id == id || -n $identifier_system ]] || { echo "--subject-id identifier needs --identifier-system" >&2; exit 2; }
 [[ -z $subjects || -f $subjects ]] || { echo "--subjects $subjects not found" >&2; exit 2; }
@@ -74,6 +90,14 @@ if [[ -n $vocab_dir ]]; then
   for f in CONCEPT CONCEPT_RELATIONSHIP VOCABULARY; do
     [[ -f $vocab_dir/$f.csv ]] || { echo "missing $vocab_dir/$f.csv (Athena download)" >&2; exit 1; }
   done
+fi
+
+source_config_name=
+if [[ -n $source_config ]]; then
+  source_config_name=$(basename "$source_config")
+  source_config=$(cd -L "$source_config" && pwd -P)
+  [[ -f $source_config/systems.csv || -f $source_config/concept_map.csv ]] \
+    || { echo "--source-config $source_config has neither systems.csv nor concept_map.csv" >&2; exit 1; }
 fi
 
 mkdir -p "$out_dir/omop"
@@ -109,10 +133,17 @@ copy_opts=$([[ $format == parquet ]] && echo "FORMAT parquet, COMPRESSION zstd" 
   echo "SET VARIABLE rejected_files = $rejected_files;"
   echo "SET VARIABLE identifier_system = $(sq "$identifier_system");"
   echo "SET VARIABLE subjects_file = $(sq "${subjects:+$(cd "$(dirname "$subjects")" && pwd)/$(basename "$subjects")}");"
+  echo "SET VARIABLE source_config = $(sq "$source_config");"
+  echo "SET VARIABLE source_config_name = $(sq "$source_config_name");"
+  echo "SET VARIABLE max_unplaced_pct = $max_unplaced_pct;"
+  echo "SET VARIABLE max_unmapped_pct = $max_unmapped_pct;"
   echo "SET VARIABLE cdm_holder = $(sq "${CDM_HOLDER:-Sage Bionetworks}");"
   stages=(01_load_fhir.sql "$([[ -n $vocab_dir ]] && echo 02_vocab_athena.sql || echo 02_vocab_empty.sql)"
           "$([[ -n $vocab_dir && -f $vocab_dir/CONCEPT_ANCESTOR.csv ]] && echo 02_ancestor_athena.sql || echo 02_ancestor_empty.sql)"
-          03_constants.sql 10_cdm_ddl.sql 20_person.sql 30_visit.sql 40_events.sql
+          03_constants.sql
+          $([[ -n $source_config && -f $source_config/systems.csv ]] && echo 04_source_systems.sql)
+          $([[ -n $source_config && -f $source_config/concept_map.csv ]] && echo 04_source_code_map.sql)
+          10_cdm_ddl.sql 20_person.sql 30_visit.sql 40_events.sql
           50_domains.sql 55_eras.sql 60_period_and_source.sql 90_qc.sql
           "$([[ -n $subjects ]] && echo 91_subjects.sql || echo 91_subjects_none.sql)" 92_intake.sql)
   for s in "${stages[@]}"; do

@@ -8,6 +8,7 @@ process FHIR_TO_OMOP {
     path sql,      stageAs: 'sql'
     path subjects                         // subjects.csv from the sidecar, or NO_SUBJECTS
     val  source                           // cdm_source and subject ID settings (main.nf)
+    path source_config, stageAs: 'source_config/*'   // assets/sources/<sourceId>, or NO_SOURCE_CONFIG
 
     output:
     path 'omop',            emit: omop
@@ -16,9 +17,10 @@ process FHIR_TO_OMOP {
     path 'versions.yml',    emit: versions
 
     script:
-    def vocab_arg = vocab.name == 'NO_VOCAB' ? '' : "--vocab-dir ${vocab}"
+    def vocab_arg = vocab.toString().endsWith('NO_VOCAB') ? '' : "--vocab-dir ${vocab}"
     def strict    = params.strict_qc.toString() == 'true' ? '--strict' : ''   // CLI gives "false" as a string
     def subj_arg  = subjects.name == 'NO_SUBJECTS' ? '' : "--subjects ${subjects}"
+    def cfg_arg   = source_config.toString().endsWith('NO_SOURCE_CONFIG') ? '' : "--source-config ${source_config}"
     def ident_arg = source.subject_id == 'identifier' ? "--identifier-system '${source.identifier_system}'" : ''
     // Leave ~20% of the task's memory for DuckDB's own overhead outside memory_limit.
     def mem_gb    = Math.max(1, (task.memory.toGiga() * 0.8) as int)
@@ -38,6 +40,9 @@ process FHIR_TO_OMOP {
         --source-reference '${source.reference}' \\
         --subject-id ${source.subject_id} ${ident_arg} ${subj_arg} \\
         --rejected-files ${source.rejected_files} \\
+        ${cfg_arg} \\
+        --max-unplaced-pct ${params.max_unplaced_pct} \\
+        --max-unmapped-pct ${params.max_unmapped_pct} \\
         ${strict}
 
     cat <<-END_VERSIONS > versions.yml

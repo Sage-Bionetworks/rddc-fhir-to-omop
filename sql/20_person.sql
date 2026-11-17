@@ -47,8 +47,10 @@ WHERE f.resource_type = 'Practitioner';
 INSERT INTO person
 SELECT m.omop_id,
        const('gender', p.gender),
-       year(p.birth), month(p.birth), day(p.birth),
-       p.birth::TIMESTAMP,
+       p.birth_year,
+       CASE WHEN length(p.birth_raw) >= 7 THEN TRY_CAST(substr(p.birth_raw, 6, 2) AS INTEGER) END,
+       CASE WHEN length(p.birth_raw) >= 10 THEN TRY_CAST(substr(p.birth_raw, 9, 2) AS INTEGER) END,
+       CASE WHEN length(p.birth_raw) >= 10 THEN fhir_ts(p.birth_raw) END,
        const('race', p.race_code),
        const('ethnicity', p.eth_code),
        (SELECT location_id FROM location l WHERE l.location_id = m.omop_id),
@@ -64,7 +66,9 @@ FROM (
            list_filter(json_extract(res, '$.identifier[*]'),
                        lambda i: i->>'system' = getvariable('identifier_system'))[1]->>'value' AS ident,
            res->>'gender' AS gender,
-           TRY_CAST(res->>'birthDate' AS DATE) AS birth,
+           res->>'birthDate' AS birth_raw,
+           -- birthDate may be partial ("1980", "1980-05"): the year is enough for a person
+           year(fhir_date(res->>'birthDate')) AS birth_year,
            res->'generalPractitioner'->0->>'reference' AS gp_ref,
            fhir_ext(fhir_ext(res, 'http://hl7.org/fhir/us/core/StructureDefinition/us-core-race'),
                     'ombCategory')->'valueCoding'->>'code' AS race_code,
@@ -77,11 +81,13 @@ FROM (
     FROM stg.fhir WHERE resource_type = 'Patient'
 ) p
 JOIN stg.id_map m ON m.resource_type = 'Patient' AND m.fhir_id = p.id
-WHERE p.birth IS NOT NULL;   -- year_of_birth is required; QC counts the drops
+WHERE p.birth_year IS NOT NULL;   -- year_of_birth is required; QC counts the drops
 
 INSERT INTO death
 SELECT m.omop_id, fhir_date(f.res->>'deceasedDateTime'), fhir_ts(f.res->>'deceasedDateTime'),
        const('type', 'ehr'), NULL, NULL, NULL
 FROM stg.fhir f
 JOIN stg.id_map m ON m.resource_type = 'Patient' AND m.fhir_id = f.id
-WHERE f.resource_type = 'Patient' AND (f.res->>'deceasedDateTime') IS NOT NULL;
+JOIN person p ON p.person_id = m.omop_id
+-- death_date is required: deceasedBoolean without a date gives no row (QC counts those)
+WHERE f.resource_type = 'Patient' AND fhir_date(f.res->>'deceasedDateTime') IS NOT NULL;

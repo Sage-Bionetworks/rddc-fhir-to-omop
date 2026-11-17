@@ -4,7 +4,7 @@ SHELL := /bin/bash
 export NXF_HOME ?= $(CURDIR)/.tools/nxf-home
 NEXTFLOW := $(CURDIR)/.tools/nextflow
 
-.PHONY: tools test nf-test nf-test-errors nf-test-docker image synthea sidecar test-sidecar dqd-deps dqd clean
+.PHONY: tools test nf-test nf-test-errors nf-test-docker image synthea mimic sidecar test-sidecar dqd-deps dqd clean
 
 tools: .tools/duckdb .tools/nextflow   ## fetch duckdb CLI + nextflow into .tools/
 
@@ -41,6 +41,20 @@ SEED ?= 1
 OUT ?= data/synthea-$(N)
 synthea:
 	scripts/generate_synthea.sh $(OUT) $(N) $(SEED)
+
+# Non-Synthea check: the MIMIC-IV Clinical Database Demo on FHIR (PhysioNet, open access,
+# ODbL; 100 real de-identified patients, ~50 MB), with assets/sources/src-mimic-demo.
+#   make mimic VOCAB=/path/to/athena      -> results/mimic-demo/qc.csv
+MIMIC_VERSION ?= 2.1.0
+MIMIC_DIR ?= data/mimic-iv-fhir-demo-$(MIMIC_VERSION)
+$(MIMIC_DIR)/SHA256SUMS.txt:
+	mkdir -p $(MIMIC_DIR)
+	cd $(MIMIC_DIR) && wget -q -r -N -c -np -nH --cut-dirs=3 -R "index.html*" -U curl \
+	    https://physionet.org/files/mimic-iv-fhir-demo/$(MIMIC_VERSION)/ && sha256sum -c --quiet SHA256SUMS.txt
+mimic: .tools/duckdb $(MIMIC_DIR)/SHA256SUMS.txt
+	PATH=$(CURDIR)/.tools:$$PATH bin/fhir_to_omop.sh --fhir-dir $(MIMIC_DIR)/fhir --out-dir results/mimic-demo \
+	    --source-config assets/sources/src-mimic-demo --source-name "MIMIC-IV FHIR demo $(MIMIC_VERSION)" \
+	    --threads 8 --memory 16GB $(if $(filter-out tests/data/vocab_mini,$(VOCAB)),--vocab-dir $(VOCAB))
 
 # The pipeline's input is a batch sidecar (_sidecar.json), written by rddc-sidecar.
 #   make sidecar BATCH=data/synthea-100 [EXPORT_TIME=...]   any directory of FHIR NDJSON / Bundles

@@ -5,7 +5,8 @@ batch described by its Croissant sidecar (`_sidecar.json`, [rddc-model](https://
 A single Nextflow process runs one DuckDB job over the batch's FHIR files and writes OMOP
 tables as Parquet (or CSV), plus a QC report.
 
-Status: prototype. It's tested against Synthea output only. See [Limitations](#limitations).
+Status: prototype. It's tested on Synthea output and on the MIMIC-IV FHIR demo (see
+[Non-Synthea data](#non-synthea-data-mimic-iv-fhir-demo)). See [Limitations](#limitations).
 
 ## Quick start
 
@@ -15,6 +16,7 @@ make test           # ETL checks on tests/data (DuckDB only, ~2 s)
 make nf-test        # the same fixture through Nextflow, no container (tests/data/batch/_sidecar.json)
 make nf-test-errors # intake rejection: a wrong checksum is reported as a QC failure
 make nf-test-docker # ...in the Docker image (builds rddc-fhir-to-omop:dev)
+make mimic VOCAB=/path/to/athena_vocab   # MIMIC-IV FHIR demo (downloads ~50 MB from PhysioNet)
 ```
 
 Real run:
@@ -31,7 +33,8 @@ Run the converter without Nextflow:
 
 ```bash
 PATH=.tools:$PATH bin/fhir_to_omop.sh --fhir-dir DIR --out-dir OUT [--vocab-dir ATHENA] \
-    [--threads 8] [--memory 16GB] [--format parquet|csv] [--db keep.duckdb] [--strict]
+    [--threads 8] [--memory 16GB] [--format parquet|csv] [--db keep.duckdb] [--strict] \
+    [--source-config assets/sources/ID] [--max-unplaced-pct 5] [--max-unmapped-pct 25]
 ```
 
 ## Parameters
@@ -45,6 +48,9 @@ PATH=.tools:$PATH bin/fhir_to_omop.sh --fhir-dir DIR --out-dir OUT [--vocab-dir 
 | `--source_name` | the sidecar's `name` | `cdm_source.cdm_source_name` |
 | `--strict_qc` | `false` | Fail the run if any QC check has status `fail` |
 | `--max_object_mb` | `128` | Largest single JSON object, e.g. one patient Bundle |
+| `--source_config` | `assets/sources/<sourceId>` if it exists | The source's mapping config; see [Source config](#source-config) |
+| `--max_unplaced_pct` | `5` | QC fails when more than this share of one resource type's records can't be loaded |
+| `--max_unmapped_pct` | `25` | QC fails when more than this share of one domain's rows has `concept_id` 0 (only with a vocabulary) |
 
 The process uses the `process_medium` label (6 CPUs, 36 GB). It passes `task.cpus` and 80% of
 `task.memory` to DuckDB as `threads` and `memory_limit`. DuckDB spills to the work directory
@@ -70,8 +76,34 @@ vendored copy of the shared intake there.
   `cdm_source_abbreviation` = `sourceId`, `source_release_date` = the `exportTime` of the
   `FhirBulkExport` the files belong to, `source_documentation_reference` = the sidecar's `@id`.
 
+- **Source config.** The sidecar's `sourceId` selects `assets/sources/<sourceId>/`, if the
+  repository has one.
+
 `bin/fhir_to_omop.sh` still runs on a plain directory (`--fhir-dir`, searched recursively);
 the sidecar values are options there (`--subjects`, `--subject-id`, `--source-*`).
+
+## Source config
+
+Synthea writes every code under its standard FHIR URI. Real sources don't: they send ICD or
+NDC codes under their own URIs, write ICD codes without the dot, and use local codes for
+labs and units. A source config says how to read one source's codes, without changing the
+SQL:
+
+```
+assets/sources/<sourceId>/
+  systems.csv       system,vocabulary_id,match         a code system URI -> an OMOP vocabulary
+  concept_map.csv   system,code,vocabulary_id,concept_code   one local code -> the Athena code that means the same
+```
+
+`match` is `exact`, `nodot` (`E119` for `E11.9`), `curie_underscore` (`HP:0000118` for
+Athena's `HP_0000118`) or `strip_prefix` (`ORPHA:558` for `558`). The defaults, used for
+every source, are in `sql/03_constants.sql`: SNOMED, LOINC, RxNorm, CVX, NDC, ICD-10-CM,
+ICD-10, ICD-9-CM, ICD-10-PCS, CPT4, HCPCS, UCUM, HPO, Mondo and ORPHAcode, under their
+FHIR URIs and, for most, their OIDs. See [assets/sources/README.md](assets/sources/README.md).
+
+To write a config for a new source, run it once and read `qc.csv`:
+`code_system_unrecognised` lists the code systems with no vocabulary and how many records
+use them. `source_config` records which config a run used.
 
 ## Outputs
 
@@ -98,10 +130,11 @@ session:
 |---|---|
 | `01_load_fhir.sql` | `read_json_objects` loads every resource as **untyped JSON** into `stg.fhir`, and flattens Bundles into their entries. A missing resource type or a new field can't break the load. Builds integer ids (`stg.id_map`, ordered by FHIR id, so the same input gives the same ids) and an index to resolve conditional references (`Practitioner?identifier=…`) |
 | `02_vocab_*.sql`, `02_ancestor_*.sql` | Loads the Athena vocabulary, keeping only `Maps to` relationships, plus drug → RxNorm ingredient from `CONCEPT_ANCESTOR` if that file is present. Without `--vocab-dir`, creates empty tables |
-| `03_constants.sql` | FHIR system URI → OMOP vocabulary, and the fixed concept ids for gender, race, ethnicity, visit class and type concepts |
+| `03_constants.sql` | Default FHIR system URI → OMOP vocabulary, the statuses that are not loaded, and the fixed concept ids for gender, race, ethnicity, visit class and type concepts |
+| `04_source_*.sql` | Loads the [source config](#source-config), when there is one |
 | `10_cdm_ddl.sql` | CDM 5.4 DDL for the tables listed above |
 | `20_person.sql`, `30_visit.sql` | Patient/Practitioner/Organization → person, death, location, provider, care_site. Encounter → visit_occurrence |
-| `40_events.sql` | All clinical resources go into one event table (`stg.event`), then concept lookup (`stg.event_mapped`) |
+| `40_events.sql` | All clinical resources go into one event table (`stg.event`) with every coding they carry, then concept lookup and the choice of coding (`stg.event_mapped`) |
 | `50_domains.sql` | Writes each event to the table for its **domain** |
 | `55_eras.sql` | condition_era and drug_era, using the OHDSI rules: same-concept records 30 days apart or less merge into one era. drug_era rolls exposures up to their ingredient (needs `CONCEPT_ANCESTOR.csv`), and `gap_days` is the uncovered days inside the era |
 | `60_period_and_source.sql` | observation_period (span of each person's activity), cdm_source |
@@ -115,13 +148,27 @@ OHDSI convention. For example, Synthea records "Stress (finding)" as a FHIR Cond
 it lands in `observation`. A source code that maps to several standard concepts gives one
 row per target.
 
+**Which coding.** A CodeableConcept can carry several codings. The one used is the first
+that maps to a standard concept, else the first the vocabulary knows, else the first.
+
+**Dates.** A record with no date of its own takes its encounter's start (encounter
+diagnoses often have only the encounter reference). Partial dates are kept: `2019` is
+loaded as 2019-01-01 and `2019-03` as 2019-03-01, and a year-only `birthDate` gives a
+person with only `year_of_birth`. QC counts both cases.
+
+**Status.** Records that did not happen or were entered by mistake are not loaded:
+`entered-in-error` everywhere, refuted Conditions and allergies, cancelled or planned
+Encounters, cancelled Observations, cancelled or draft MedicationRequests, and not-done
+Procedures, MedicationAdministrations and Immunizations (`stg.status_exclude` in
+`03_constants.sql`). QC counts them. Stopped or on-hold records are loaded.
+
 | FHIR | Default OMOP table | Notes |
 |---|---|---|
-| Patient | person, location, death | race/ethnicity from US Core extensions; state names → 2-letter codes |
+| Patient | person, location, death | race/ethnicity from US Core extensions; state names → 2-letter codes; `deceasedBoolean` with no date gives no death row |
 | Encounter | visit_occurrence | `class` → 9201/9202/9203/581476/5083; provider and care_site from conditional refs |
 | Condition | condition_occurrence | onset/abatement; clinicalStatus → `condition_status_source_value` |
 | Procedure | procedure_occurrence | |
-| MedicationRequest / MedicationAdministration | drug_exposure | code from `medicationCodeableConcept` or the referenced Medication; end date = start when FHIR has none |
+| MedicationRequest / MedicationAdministration | drug_exposure | code from `medicationCodeableConcept`, a contained Medication or the referenced Medication; a Medication with ingredients but no code gives one row per ingredient; end date = start when FHIR has none |
 | Immunization | drug_exposure | CVX |
 | Observation | measurement if it has a numeric value or is lab/vital-signs; else observation | components (e.g. a BP panel) become one row each and the panel row is dropped |
 | AllergyIntolerance | observation | |
@@ -134,9 +181,15 @@ Timestamps keep the local wall-clock time and drop the UTC offset, so `*_date` a
 **QC (`qc.csv`).** The report lists:
 
 - resources per type, and whether each type is mapped
-- events dropped because no person resolves or there's no start date
+- events dropped because no person resolves or there's no start date, and the share per
+  resource type (`fail` above `--max_unplaced_pct`)
+- records not loaded because of their status; records dated from their encounter or from a
+  partial date; patients deceased with no date
 - encounter references with no matching visit
-- percentage of unmapped concepts per domain, and the top unmapped codes
+- percentage of unmapped concepts per domain (`fail` above `--max_unmapped_pct`), of
+  unmapped units, and the top unmapped codes
+- code systems with no vocabulary, with record counts
+- the source config used, and entries in it the vocabulary can't resolve (`fail`)
 - hard-coded constants missing, non-standard or deprecated in the loaded vocabulary (`fail`)
 - person and visit foreign-key orphans (`fail`)
 - persons with no observation period
@@ -195,7 +248,33 @@ Fixed after the first run with the full vocabulary:
 - Synthea's UCUM spellings now resolve through `stg.ucum_alias`, e.g. `U/L` → Athena
   `[U]/L`.
 
+## Non-Synthea data: MIMIC-IV FHIR demo
+
+`make mimic VOCAB=/path/to/athena` downloads the
+[MIMIC-IV Clinical Database Demo on FHIR](https://physionet.org/content/mimic-iv-fhir-demo/2.1.0/)
+(PhysioNet, open access, ODbL: 100 real de-identified patients, 915,000 resources) and
+converts it with `assets/sources/src-mimic-demo`. It is the check that the converter does
+not depend on Synthea's habits. With Athena v5.0 29-AUG-26, about 17 s on a laptop:
+
+| | Without the source config and fixes | Now |
+|---|---|---|
+| `condition_occurrence` rows | 0 of 5,051 Conditions (none has a date) | 4,433, dated from the encounter; 1.0% unmapped |
+| Measurement units mapped | under 3% | 99% |
+| Drug rows unmapped | 100% | 80.4% (NDC maps; formulary and ICU item codes are local) |
+| Procedure rows unmapped | 63.5% | 42.1% (ICD maps; ICU item codes are local) |
+| Measurement / observation rows unmapped | 97.8% / 99.6% | 97.8% / 99.4% (MIMIC's chart and lab item codes are local) |
+| QC | 0 failures | 4 failures: the unmapped share of four domains is over the limit |
+
+The run still fails QC, as it should: most MIMIC records carry only MIMIC's own item
+codes, and `concept_map.csv` does not translate those yet. MedicationDispense,
+MedicationStatement and Specimen are not mapped, and ICU and ED stays inside an admission
+(`Encounter.partOf`) become visits of their own rather than `visit_detail`.
+
 ## Test data
+
+- `tests/data/edge/`: hand-written FHIR for shapes Synthea never produces (partial dates,
+  no dates, several codings, contained Medications, statuses, local code systems), with its
+  source config. See its README.
 
 - `tests/data/batch/_sidecar.json`: the batch's sidecar, written by rddc-sidecar
   (`make test-sidecar`); `_sidecar.errors.json` is a copy with one wrong checksum.
@@ -221,11 +300,13 @@ Fixed after the first run with the full vocabulary:
 These are deliberate scope cuts for the prototype, roughly in priority order:
 
 - **Vocabulary:** only `Maps to` is used. There's no `Maps to value`, so the value isn't split
-  out for "finding + value" codes, and the first coding of each CodeableConcept is used even
-  if a later coding maps.
-- **Not mapped:** `dose_era`, `visit_detail`, `note` (from
-  DocumentReference), `specimen`, `cost` / `payer_plan_period` (from Claim/EOB), and
-  DiagnosticReport. Its results are already mapped as Observations.
+  out for "finding + value" codes. Coded values (`valueCodeableConcept`) use their first
+  coding only. Local codes map only through a source config.
+- **Not mapped:** `dose_era`, `visit_detail` (child Encounters become visits), `note` (from
+  DocumentReference), `specimen`, `cost` / `payer_plan_period` (from Claim/EOB),
+  MedicationDispense, MedicationStatement, FamilyMemberHistory, QuestionnaireResponse and
+  DiagnosticReport. Its results are already mapped as Observations. Observation
+  `valueDateTime`, reference ranges and `dataAbsentReason` are not carried.
 - **Drugs:** no `days_supply` or `quantity` from dispenseRequest, and no route. Vaccines
   (CVX) have no RxNorm ingredient ancestor in current Athena releases, so they aren't in
   `drug_era`. QC reports them as `drug_without_ingredient`.
@@ -233,8 +314,9 @@ These are deliberate scope cuts for the prototype, roughly in priority order:
   across incremental loads.
 - **Validation:** checked by `tests/run_tests.sh`, `qc.csv` and DQD (`make dqd`), including
   DQD with a full Athena vocabulary on 100 Synthea patients (see
-  [Data quality](#data-quality-ohdsi-dqd)). Not yet compared with OHDSI's ETL-Synthea, and
-  only tested on Synthea data.
+  [Data quality](#data-quality-ohdsi-dqd)), and the MIMIC-IV FHIR demo (`make mimic`). Not yet
+  compared with an independent conversion of the same patients (OHDSI's ETL-Synthea, or
+  the MIMIC-IV demo in OMOP), and DQD has not been run on the MIMIC output.
 
 ## License
 

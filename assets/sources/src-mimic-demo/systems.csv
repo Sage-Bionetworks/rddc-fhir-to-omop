@@ -1,0 +1,6 @@
+system,vocabulary_id,match
+http://mimic.mit.edu/fhir/mimic/CodeSystem/mimic-diagnosis-icd10,ICD10CM,nodot
+http://mimic.mit.edu/fhir/mimic/CodeSystem/mimic-diagnosis-icd9,ICD9CM,nodot
+http://mimic.mit.edu/fhir/mimic/CodeSystem/mimic-procedure-icd10,ICD10PCS,exact
+http://mimic.mit.edu/fhir/mimic/CodeSystem/mimic-procedure-icd9,ICD9Proc,nodot
+http://mimic.mit.edu/fhir/mimic/CodeSystem/mimic-medication-ndc,NDC,exact
