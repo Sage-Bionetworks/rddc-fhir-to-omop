@@ -29,6 +29,22 @@
         "description": "Fail the run if any QC check has status 'fail'.",
         "default": false
       },
+      "max_unplaced_pct": {
+        "type": "number",
+        "title": "Max unplaced records (%)",
+        "description": "QC fails when more than this share of one resource type's records could not be loaded.",
+        "default": 5,
+        "minimum": 0,
+        "maximum": 100
+      },
+      "max_unmapped_pct": {
+        "type": "number",
+        "title": "Max unmapped rows (%)",
+        "description": "QC fails when more than this share of one domain's rows have concept_id 0.",
+        "default": 25,
+        "minimum": 0,
+        "maximum": 100
+      },
       "max_object_mb": {
         "type": "integer",
         "title": "Largest JSON object (MB)",
@@ -37,17 +53,9 @@
         "minimum": 1
       }
     },
-    "required": [
-      "vocab_dir"
-    ]
+    "required": ["vocab_dir"]
   },
   "ui": {
-    "ui:order": [
-      "vocab_dir",
-      "output_format",
-      "source_name",
-      "strict_qc",
-      "max_object_mb"
-    ]
+    "ui:order": ["vocab_dir", "output_format", "source_name", "strict_qc", "max_unplaced_pct", "max_unmapped_pct", "max_object_mb"]
   }
 }

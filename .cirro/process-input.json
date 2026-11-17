@@ -3,6 +3,8 @@
   "output_format": "$.dataset.params.output_format",
   "source_name": "$.dataset.params.source_name",
   "strict_qc": "$.dataset.params.strict_qc",
+  "max_unplaced_pct": "$.dataset.params.max_unplaced_pct",
+  "max_unmapped_pct": "$.dataset.params.max_unmapped_pct",
   "max_object_mb": "$.dataset.params.max_object_mb",
   "outdir": "$.dataset.dataPath"
 }
