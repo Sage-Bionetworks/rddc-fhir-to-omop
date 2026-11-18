@@ -295,6 +295,18 @@ MedicationStatement and Specimen are not mapped, and ICU and ED stays inside an 
 | 8 (fixture) | 0.2 MB gz | 2 / 4 GB | <1 s |
 | 1,120 (`-p 1000 -s 1`, incl. deceased) | 2.6 GB | 8 / 8 GB | 12.5 s → 19 MB Parquet, 1.08 M OMOP rows |
 
+## Releasing an image
+
+Runs pull the image named in `nextflow.config` (`process.container`). To publish a new one:
+
+1. Set the new version in `nextflow.config` and in `IMAGE` in the `Makefile`
+   (`ghcr.io/sage-bionetworks/rddc-fhir-to-omop:X.Y.Z`), and merge.
+2. Tag that commit `vX.Y.Z` and push the tag.
+
+`.github/workflows/image.yml` then runs `make test`, builds the image and pushes it to GHCR.
+It stops before building if the tag and the name in `nextflow.config` differ. `make
+push-image` does the same from a laptop.
+
 ## Limitations
 
 These are deliberate scope cuts for the prototype, roughly in priority order:

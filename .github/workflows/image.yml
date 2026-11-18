@@ -1,0 +1,58 @@
+# Build and publish the pipeline's image when a release tag is pushed.
+#
+# A tag vX.Y.Z publishes ghcr.io/sage-bionetworks/rddc-fhir-to-omop:X.Y.Z. That must be the
+# image nextflow.config names (process.container), since that is the one runs pull; the
+# first step fails the build if the two differ. To release: set the new version in
+# nextflow.config (and IMAGE in the Makefile), merge, then tag that commit.
+name: image
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/sage-bionetworks/rddc-fhir-to-omop
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: The tag must match the image in nextflow.config
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          want="$IMAGE:$version"
+          have=$(sed -n "s/^ *container *= *'\([^']*\)'.*/\1/p" nextflow.config | head -n 1)
+          if [ "$have" != "$want" ]; then
+            echo "::error::tag $GITHUB_REF_NAME would publish $want, but nextflow.config uses $have"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "duckdb=$(sed -n 's/^DUCKDB_VERSION *?= *//p' Makefile)" >> "$GITHUB_OUTPUT"
+
+      - name: Tests (DuckDB only)
+        run: make test
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          build-args: DUCKDB_VERSION=${{ steps.version.outputs.duckdb }}
+          tags: ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
