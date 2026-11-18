@@ -4,8 +4,6 @@ The input dataset is a deposited batch: its files plus `_sidecar.json` at the ba
 pipeline finds every other file from the sidecar, so the only parameter set here is
 `sidecar`, the full S3 path of that file. A dataset without exactly one root-level
 `_sidecar.json` is refused before any compute starts.
-
-Written by rddc-cirro-config's scripts/cirro_pipeline.py scaffold; edit freely.
 """
 
 from cirro.helpers.preprocess_dataset import PreprocessDataset
