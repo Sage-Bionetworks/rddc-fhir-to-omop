@@ -62,6 +62,26 @@ def sourceConfig(Map batch) {
     return file("${projectDir}/assets/NO_SOURCE_CONFIG", checkIfExists: true)
 }
 
+// What ran, for pipeline_info/software_versions.yml: the pipeline's version and exact commit,
+// where it came from and the Nextflow version. commit and revision are empty when the
+// pipeline is run from a local directory instead of a repository URL (as Cirro runs it).
+// The process adds its own lines: image, DuckDB, vocabulary release and source config.
+def yamlQuoted(v) {
+    return '"' + (v == null ? '' : v.toString().replace('"', "'")) + '"'
+}
+
+def workflowVersions() {
+    def m = workflow.manifest
+    return [
+        '"Workflow":',
+        "    ${m.name}: ${yamlQuoted(m.version)}",
+        "    commit: ${yamlQuoted(workflow.commitId)}",
+        "    revision: ${yamlQuoted(workflow.revision)}",
+        "    repository: ${yamlQuoted(workflow.repository ?: m.homePage)}",
+        "    nextflow: ${yamlQuoted(workflow.nextflow.version)}",
+    ].join('\n') + '\n'
+}
+
 def intakeRow(Map meta, String route, String reason) {
     return [meta.id, meta.name, meta.additionalType, meta.resourceType ?: '', meta.encodingFormat ?: '',
             meta.subjectIds.size(), route, reason].join('\t') + '\n'
@@ -133,5 +153,6 @@ workflow {
     FHIR_TO_OMOP.out.versions
         .map { f -> f.text }
         .unique()
+        .mix(channel.of(workflowVersions()))
         .collectFile(name: 'software_versions.yml', storeDir: "${params.outdir}/pipeline_info")
 }

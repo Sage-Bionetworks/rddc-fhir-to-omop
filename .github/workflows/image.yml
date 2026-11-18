@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: The tag must match the image in nextflow.config
+      - name: The tag must match the image and manifest version in nextflow.config
         id: version
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -31,6 +31,11 @@ jobs:
           have=$(sed -n "s/^ *container *= *'\([^']*\)'.*/\1/p" nextflow.config | head -n 1)
           if [ "$have" != "$want" ]; then
             echo "::error::tag $GITHUB_REF_NAME would publish $want, but nextflow.config uses $have"
+            exit 1
+          fi
+          manifest=$(sed -n "s/^ *version *= *'\([^']*\)'.*/\1/p" nextflow.config | head -n 1)
+          if [ "$manifest" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME is version $version, but manifest.version in nextflow.config is $manifest"
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"

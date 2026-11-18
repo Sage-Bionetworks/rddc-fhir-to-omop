@@ -114,7 +114,7 @@ use them. `source_config` records which config a run used.
   qc.csv                   check_name, table_name, value, status (ok|warn|fail), detail
   intake/intake.tsv        every sidecar entry: class, resource type, route (convert|skipped|rejected|file_set), reason
   intake/batch.json        the batch header (source, batch, contributor, sensitivity)
-  pipeline_info/software_versions.yml
+  pipeline_info/software_versions.yml   what ran: pipeline version, commit and repository, Nextflow, image, DuckDB, vocabulary release, source config (with a checksum)
 ```
 
 Tables: `person`, `observation_period`, `visit_occurrence`, `condition_occurrence`,
@@ -299,12 +299,13 @@ MedicationStatement and Specimen are not mapped, and ICU and ED stays inside an 
 
 Runs pull the image named in `nextflow.config` (`process.container`). To publish a new one:
 
-1. Set the new version in `nextflow.config` and in `IMAGE` in the `Makefile`
-   (`ghcr.io/sage-bionetworks/rddc-fhir-to-omop:X.Y.Z`), and merge.
+1. Set the new version in `nextflow.config` (`manifest.version` and the image,
+   `ghcr.io/sage-bionetworks/rddc-fhir-to-omop:X.Y.Z`) and in `IMAGE` in the `Makefile`, and merge.
 2. Tag that commit `vX.Y.Z` and push the tag.
 
 `.github/workflows/image.yml` then runs `make test`, builds the image and pushes it to GHCR.
-It stops before building if the tag and the name in `nextflow.config` differ. `make
+It stops before building if the tag differs from the image name or `manifest.version` in
+`nextflow.config`. `make
 push-image` does the same from a laptop.
 
 ## Limitations

@@ -45,9 +45,22 @@ process FHIR_TO_OMOP {
         --max-unmapped-pct ${params.max_unmapped_pct} \\
         ${strict}
 
+    # What the conversion used besides the code: the image, DuckDB, the vocabulary release (the 'None'
+    # row of VOCABULARY.csv, as in cdm_source) and the source config with a checksum of its files.
+    vocabulary=none
+    if [ -n "${vocab_arg}" ]; then
+        vocabulary=\$(awk -F'\\t' '\$1 == "None" { print \$4 }' ${vocab}/VOCABULARY.csv)
+    fi
+    source_config=none
+    if [ -n "${cfg_arg}" ]; then
+        source_config="\$(basename ${source_config}) md5:\$(cat \$(find -L ${source_config} -type f -name '*.csv' | sort) | md5sum | cut -d' ' -f1)"
+    fi
     cat <<-END_VERSIONS > versions.yml
     "${task.process}":
-        duckdb: \$(DUCKDB_AGENT_MODE=0 duckdb --version | awk '{print \$1}')
+        container: "${task.container ?: 'none'}"
+        duckdb: "\$(DUCKDB_AGENT_MODE=0 duckdb --version | awk '{print \$1}')"
+        vocabulary: "\$vocabulary"
+        source_config: "\$source_config"
     END_VERSIONS
     """
 
