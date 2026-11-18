@@ -15,7 +15,7 @@ make tools          # fetch the DuckDB CLI and Nextflow into .tools/ (gitignored
 make test           # ETL checks on tests/data (DuckDB only, ~2 s)
 make nf-test        # the same fixture through Nextflow, no container (tests/data/batch/_sidecar.json)
 make nf-test-errors # intake rejection: a wrong checksum is reported as a QC failure
-make nf-test-docker # ...in the Docker image (builds rddc-fhir-to-omop:dev)
+make nf-test-docker # ...in the Docker image (builds it locally under its ghcr.io name)
 make mimic VOCAB=/path/to/athena_vocab   # MIMIC-IV FHIR demo (downloads ~50 MB from PhysioNet)
 ```
 

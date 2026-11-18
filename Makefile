@@ -4,7 +4,7 @@ SHELL := /bin/bash
 export NXF_HOME ?= $(CURDIR)/.tools/nxf-home
 NEXTFLOW := $(CURDIR)/.tools/nextflow
 
-.PHONY: tools test nf-test nf-test-errors nf-test-docker image synthea mimic sidecar test-sidecar dqd-deps dqd clean
+.PHONY: tools test nf-test nf-test-errors nf-test-docker image push-image synthea mimic sidecar test-sidecar dqd-deps dqd clean
 
 tools: .tools/duckdb .tools/nextflow   ## fetch duckdb CLI + nextflow into .tools/
 
@@ -32,8 +32,15 @@ nf-test-errors: tools   ## intake rejection: a wrong checksum is a QC fail (and 
 nf-test-docker: tools image   ## full pipeline via Nextflow in the Docker image
 	$(NEXTFLOW) run . -profile test,docker --outdir results/test-docker
 
-image:   ## build rddc-fhir-to-omop:dev
-	docker build --build-arg DUCKDB_VERSION=$(DUCKDB_VERSION) -t rddc-fhir-to-omop:dev .
+# The image name must equal process.container in nextflow.config (Cirro pulls that name).
+IMAGE ?= ghcr.io/sage-bionetworks/rddc-fhir-to-omop:0.1.0.dev0
+image:   ## build the image under the name nextflow.config uses
+	docker build --build-arg DUCKDB_VERSION=$(DUCKDB_VERSION) \
+	    --label org.opencontainers.image.source=https://github.com/Sage-Bionetworks/rddc-fhir-to-omop \
+	    --label org.opencontainers.image.licenses=Apache-2.0 -t $(IMAGE) .
+
+push-image: image   ## publish it (needs `docker login ghcr.io` with write:packages)
+	docker push $(IMAGE)
 
 # Fresh Synthea bulk export: make synthea N=100 SEED=1 OUT=data/synthea-100
 N ?= 100
